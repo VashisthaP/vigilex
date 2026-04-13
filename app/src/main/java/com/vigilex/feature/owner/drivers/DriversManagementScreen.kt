@@ -4,19 +4,40 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.vigilex.core.model.Trip
 import com.vigilex.core.model.User
 import com.vigilex.ui.theme.Amber
 import com.vigilex.ui.theme.NavyDark
 import com.vigilex.ui.theme.NavyMid
+
+// ── Preset destinations (name, lat, lng) ─────────────────────────────────────
+private val PRESET_DESTINATIONS = listOf(
+    Triple("Noida Sector 62",       28.6270, 77.3680),
+    Triple("Gurugram Cyber City",   28.4950, 77.0860),
+    Triple("Connaught Place, Delhi",28.6315, 77.2167),
+    Triple("IGI Airport, Delhi",    28.5562, 77.1000),
+    Triple("Faridabad Sector 15",   28.4089, 77.3178),
+    Triple("Ghaziabad Raj Nagar",   28.6692, 77.4538),
+    Triple("Dwarka Sector 21",      28.5530, 77.0588),
+    Triple("Noida Sector 18",       28.5706, 77.3219),
+    Triple("Greater Noida",         28.4744, 77.5040),
+    Triple("Meerut Bus Stand",      28.9845, 77.7064),
+    Triple("Agra Taj Mahal Gate",   27.1751, 78.0421),
+    Triple("Jaipur Sindhi Camp",    26.9124, 75.7873),
+    Triple("Custom destination",    0.0,     0.0)       // free-text entry
+)
 
 @Composable
 fun DriversManagementScreen(
@@ -24,7 +45,7 @@ fun DriversManagementScreen(
     viewModel: DriversViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showAddDialog    by remember { mutableStateOf(false) }
     var showAssignDialog by remember { mutableStateOf<User?>(null) }
 
     LaunchedEffect(uiState.successMessage) {
@@ -36,15 +57,16 @@ fun DriversManagementScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Drivers", color = Amber) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = Amber) } },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = Amber) }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = NavyDark)
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = Amber
-            ) { Icon(Icons.Default.Add, null, tint = NavyDark) }
+            FloatingActionButton(onClick = { showAddDialog = true }, containerColor = Amber) {
+                Icon(Icons.Default.Add, null, tint = NavyDark)
+            }
         }
     ) { padding ->
         LazyColumn(
@@ -53,7 +75,8 @@ fun DriversManagementScreen(
         ) {
             items(uiState.drivers) { driver ->
                 DriverRow(
-                    driver = driver,
+                    driver      = driver,
+                    activeTrip  = uiState.activeTrips[driver.uid],
                     onAssignTrip = { showAssignDialog = driver }
                 )
             }
@@ -63,120 +86,205 @@ fun DriversManagementScreen(
     if (showAddDialog) {
         AddDriverDialog(
             isLoading = uiState.isLoading,
-            error = uiState.errorMessage,
-            onConfirm = { name, phone ->
-                viewModel.addDriver(name, phone)
+            error     = uiState.errorMessage,
+            onConfirm = { name, phone, pin ->
+                viewModel.addDriver(name, phone, pin)
                 showAddDialog = false
             },
-            onDismiss = { showAddDialog = false }
+            onDismiss = { showAddDialog = false; viewModel.clearMessages() }
         )
     }
 
     showAssignDialog?.let { driver ->
         AssignTripDialog(
             driverName = driver.name,
-            onConfirm = { name, lat, lng ->
+            onConfirm  = { name, lat, lng ->
                 viewModel.assignTrip(driver.uid, name, lat, lng)
                 showAssignDialog = null
             },
-            onDismiss = { showAssignDialog = null }
+            onDismiss  = { showAssignDialog = null }
         )
     }
 }
 
+// ── Driver row ────────────────────────────────────────────────────────────────
+
 @Composable
-private fun DriverRow(driver: User, onAssignTrip: () -> Unit) {
+private fun DriverRow(driver: User, activeTrip: Trip?, onAssignTrip: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = NavyMid),
-        shape = RoundedCornerShape(10.dp)
+        colors   = CardDefaults.cardColors(containerColor = NavyMid),
+        shape    = RoundedCornerShape(10.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        Row(modifier = Modifier.padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(driver.name, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                Text(driver.email, color = Color.White.copy(0.5f), style = MaterialTheme.typography.bodySmall)
-                Text(driver.phone, color = Color.White.copy(0.4f), style = MaterialTheme.typography.bodySmall)
+                Text(driver.name,  color = Color.White,            style = MaterialTheme.typography.bodyMedium)
+                Text(driver.phone, color = Color.White.copy(0.45f), style = MaterialTheme.typography.bodySmall)
+                if (activeTrip != null) {
+                    Text(
+                        "On trip → ${activeTrip.destination.name}",
+                        color = Amber.copy(0.8f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
-            TextButton(onClick = onAssignTrip) {
-                Text("Assign Trip", color = Amber, style = MaterialTheme.typography.labelSmall)
+            if (activeTrip == null) {
+                TextButton(onClick = onAssignTrip) {
+                    Text("Assign Trip", color = Amber, style = MaterialTheme.typography.labelSmall)
+                }
+            } else {
+                // Driver is already on a trip — show status chip instead
+                Surface(
+                    color = Amber.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        "Active",
+                        color = Amber,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
     }
 }
 
+// ── Add driver dialog — name + phone + owner-set exit PIN ────────────────────
+
 @Composable
 private fun AddDriverDialog(
     isLoading: Boolean,
-    error: String?,
-    onConfirm: (String, String) -> Unit,
+    error:     String?,
+    onConfirm: (name: String, phone: String, pin: String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
+    var name  by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
+    var pin   by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor   = Color(0xFF1A2A3A),
         title = { Text("Add Driver", color = Amber) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full Name") })
-                OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone") })
+                OutlinedTextField(
+                    value         = name,
+                    onValueChange = { name = it },
+                    label         = { Text("Full Name") },
+                    singleLine    = true,
+                    modifier      = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value           = phone,
+                    onValueChange   = { if (it.length <= 13) phone = it },
+                    label           = { Text("Mobile Number") },
+                    placeholder     = { Text("+91XXXXXXXXXX") },
+                    singleLine      = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    modifier        = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value           = pin,
+                    onValueChange   = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pin = it },
+                    label           = { Text("6-Digit Exit PIN") },
+                    placeholder     = { Text("e.g. 123456") },
+                    singleLine      = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier        = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Share this PIN with the driver. They use it to unlock the monitoring screen.",
+                    color = Color.White.copy(0.45f),
+                    style = MaterialTheme.typography.bodySmall
+                )
                 if (error != null) Text(error, color = Color.Red, style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(name, phone) },
-                enabled = !isLoading && name.isNotBlank() && phone.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = Amber)
-            ) { Text(if (isLoading) "Adding..." else "Add", color = NavyDark) }
+                onClick  = { onConfirm(name, phone, pin) },
+                enabled  = !isLoading && name.isNotBlank() && phone.isNotBlank() && pin.length == 6,
+                colors   = ButtonDefaults.buttonColors(containerColor = Amber)
+            ) { Text(if (isLoading) "Adding..." else "Add Driver", color = NavyDark) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-        containerColor = Color(0xFF1A2A3A)
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
+// ── Assign trip dialog — dropdown destination ────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AssignTripDialog(
     driverName: String,
-    onConfirm: (String, Double, Double) -> Unit,
-    onDismiss: () -> Unit
+    onConfirm:  (name: String, lat: Double, lng: Double) -> Unit,
+    onDismiss:  () -> Unit
 ) {
-    // Simple text input for destination — in production wire up Places Autocomplete SDK here
-    var destination by remember { mutableStateOf("") }
+    var expanded    by remember { mutableStateOf(false) }
+    var selected    by remember { mutableStateOf(PRESET_DESTINATIONS.first()) }
+    var customDest  by remember { mutableStateOf("") }
+
+    val isCustom = selected.first == "Custom destination"
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor   = Color(0xFF1A2A3A),
         title = { Text("Assign Trip — $driverName", color = Amber) },
         text = {
-            Column {
-                Text(
-                    "Enter destination. In the production build, wire the Places Autocomplete SDK to this field for lat/lng resolution.",
-                    color = Color.White.copy(0.6f),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = destination,
-                    onValueChange = { destination = it },
-                    label = { Text("Destination") }
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Destination dropdown
+                ExposedDropdownMenuBox(
+                    expanded        = expanded,
+                    onExpandedChange = { expanded = !expanded }
+                ) {
+                    OutlinedTextField(
+                        value         = selected.first,
+                        onValueChange = {},
+                        readOnly      = true,
+                        label         = { Text("Destination") },
+                        trailingIcon  = {
+                            Icon(Icons.Default.ArrowDropDown, null,
+                                tint = Amber)
+                        },
+                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded        = expanded,
+                        onDismissRequest = { expanded = false }
+                    ) {
+                        PRESET_DESTINATIONS.forEach { dest ->
+                            DropdownMenuItem(
+                                text    = { Text(dest.first, color = Color.White) },
+                                onClick = { selected = dest; expanded = false },
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Show custom entry field only when "Custom destination" is chosen
+                if (isCustom) {
+                    OutlinedTextField(
+                        value         = customDest,
+                        onValueChange = { customDest = it },
+                        label         = { Text("Custom destination name") },
+                        singleLine    = true,
+                        modifier      = Modifier.fillMaxWidth()
+                    )
+                }
             }
         },
         confirmButton = {
+            val destName = if (isCustom) customDest else selected.first
+            val enabled  = if (isCustom) customDest.isNotBlank() else true
             Button(
-                onClick = {
-                    // Lat/lng would come from Places SDK selection — using 0.0 as placeholder
-                    onConfirm(destination, 0.0, 0.0)
-                },
-                enabled = destination.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = Amber)
+                onClick  = { onConfirm(destName, selected.second, selected.third) },
+                enabled  = enabled,
+                colors   = ButtonDefaults.buttonColors(containerColor = Amber)
             ) { Text("Assign", color = NavyDark) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-        containerColor = Color(0xFF1A2A3A)
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

@@ -25,6 +25,9 @@ class TripHistoryViewModel @Inject constructor(
     private val _selectedTripEvents = MutableStateFlow<List<ImpairmentEvent>>(emptyList())
     val selectedTripEvents: StateFlow<List<ImpairmentEvent>> = _selectedTripEvents.asStateFlow()
 
+    private val _isLoadingEvents = MutableStateFlow(false)
+    val isLoadingEvents: StateFlow<Boolean> = _isLoadingEvents.asStateFlow()
+
     init {
         viewModelScope.launch {
             val uid = auth.currentUser?.uid ?: return@launch
@@ -33,9 +36,12 @@ class TripHistoryViewModel @Inject constructor(
     }
 
     fun loadEventsForTrip(tripId: String) {
+        _isLoadingEvents.value = true
+        _selectedTripEvents.value = emptyList()
         viewModelScope.launch {
             firestore.observeEventsForTrip(tripId).collect {
                 _selectedTripEvents.value = it
+                _isLoadingEvents.value = false
             }
         }
     }

@@ -120,35 +120,83 @@ fun TripDetailScreen(
     onBack: () -> Unit,
     viewModel: TripHistoryViewModel = hiltViewModel()
 ) {
+    val trips  by viewModel.trips.collectAsState()
     val events by viewModel.selectedTripEvents.collectAsState()
+    val isLoading by viewModel.isLoadingEvents.collectAsState()
+
     LaunchedEffect(tripId) { viewModel.loadEventsForTrip(tripId) }
-    val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+
+    val trip = trips.firstOrNull { it.id == tripId }
+    val sdf  = SimpleDateFormat("HH:mm:ss dd MMM", Locale.getDefault())
 
     Scaffold(
         containerColor = NavyDark,
         topBar = {
             TopAppBar(
-                title = { Text("Trip Detail", color = Amber) },
+                title = { Text(trip?.destination?.name?.let { "Trip — $it" } ?: "Trip Detail", color = Amber) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = Amber) } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = NavyDark)
             )
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)
         ) {
-            items(events.sortedByDescending { it.timestamp }) { event ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(NavyMid, RoundedCornerShape(8.dp))
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+            // Trip summary card
+            if (trip != null) {
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = NavyMid),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(event.type.name, color = Amber, style = MaterialTheme.typography.bodySmall)
-                    Text(event.subtype.name, color = Color.White.copy(0.6f), style = MaterialTheme.typography.bodySmall)
-                    Text(sdf.format(Date(event.timestamp)), color = Color.White.copy(0.4f), style = MaterialTheme.typography.bodySmall)
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Destination: ${trip.destination.name}", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                        Text("Started: ${sdf.format(Date(trip.startTime))}", color = Color.White.copy(0.5f), style = MaterialTheme.typography.bodySmall)
+                        Text("Impairment alerts: ${trip.drowsyEventCount}  ·  Exit attempts: ${trip.closeAttemptCount}",
+                            color = Color.White.copy(0.5f), style = MaterialTheme.typography.bodySmall)
+                        StatusBadge(type = when (trip.status) {
+                            com.vigilex.core.model.TripStatus.ACTIVE    -> StatusType.ACTIVE
+                            com.vigilex.core.model.TripStatus.HIGH_RISK -> StatusType.ALERT
+                            com.vigilex.core.model.TripStatus.COMPLETE  -> StatusType.COMPLETE
+                        })
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Text("Event Timeline", color = Amber, style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(bottom = 8.dp))
+            }
+
+            when {
+                isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Amber)
+                }
+                events.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("No events recorded for this trip.", color = Color.White.copy(0.4f),
+                            style = MaterialTheme.typography.bodyMedium)
+                        Text("Events appear once the driver's monitoring session is active.",
+                            color = Color.White.copy(0.25f), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(events.sortedByDescending { it.timestamp }) { event ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(NavyMid, RoundedCornerShape(8.dp))
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(event.type.name, color = Amber, style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f))
+                            Text(event.subtype.name.replace("_", " "), color = Color.White.copy(0.6f),
+                                style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1.5f))
+                            Text(sdf.format(Date(event.timestamp)), color = Color.White.copy(0.4f),
+                                style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
         }

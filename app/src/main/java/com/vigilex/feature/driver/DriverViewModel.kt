@@ -54,9 +54,20 @@ class DriverViewModel @Inject constructor(
     // would immediately set isTripComplete = true and sign the driver out.
     private var hadActiveTrip = false
 
+    // Cached exit PIN from Firestore — allows driver to unlock without owner OTP.
+    private var driverExitPin: String = ""
+
     init {
         observeActiveTrip()
         checkDisclaimerShown()
+        loadDriverExitPin()
+    }
+
+    private fun loadDriverExitPin() {
+        val uid = auth.currentUser?.uid ?: return
+        viewModelScope.launch {
+            driverExitPin = runCatching { firestore.getUser(uid)?.exitPin ?: "" }.getOrDefault("")
+        }
     }
 
     private fun checkDisclaimerShown() {
@@ -169,15 +180,21 @@ class DriverViewModel @Inject constructor(
     fun submitOtp(code: String) {
         val tripId = _uiState.value.trip?.id ?: return
         viewModelScope.launch {
-            val valid = runCatching { firestore.validateOtp(tripId, code) }.getOrDefault(false)
-            if (valid) {
+            // Accept either the trip-specific OTP (generated per exit attempt)
+            // or the driver's static exit PIN (set by owner at driver creation).
+            val staticPinValid = driverExitPin.isNotBlank() && code == driverExitPin
+            val tripOtpValid   = runCatching { firestore.validateOtp(tripId, code) }.getOrDefault(false)
+
+            if (staticPinValid || tripOtpValid) {
                 stopMonitoringService()
                 _uiState.value = _uiState.value.copy(
-                    showOtpDialog = false,
+                    showOtpDialog  = false,
                     isTripComplete = true
                 )
             } else {
-                _uiState.value = _uiState.value.copy(otpError = "Invalid or expired OTP. Request a new one.")
+                _uiState.value = _uiState.value.copy(
+                    otpError = "Invalid PIN. Use your 6-digit exit PIN or request OTP from owner."
+                )
             }
         }
     }

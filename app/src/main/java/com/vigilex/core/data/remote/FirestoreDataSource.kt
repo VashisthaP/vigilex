@@ -221,23 +221,25 @@ class FirestoreDataSource @Inject constructor(
 
 private fun com.google.firebase.firestore.DocumentSnapshot.toUser(): User? = runCatching {
     User(
-        uid = id,
-        name = getString("name") ?: "",
-        email = getString("email") ?: "",
-        phone = getString("phone") ?: "",
-        role = Role.from(getString("role") ?: "driver"),
+        uid       = id,
+        name      = getString("name") ?: "",
+        email     = getString("email") ?: "",
+        phone     = getString("phone") ?: "",
+        role      = Role.from(getString("role") ?: "driver"),
         companyId = getString("companyId") ?: "",
-        fcmToken = getString("fcmToken") ?: ""
+        fcmToken  = getString("fcmToken") ?: "",
+        exitPin   = getString("exitPin") ?: ""
     )
 }.getOrNull()
 
 private fun User.toMap() = mapOf(
-    "name" to name,
-    "email" to email,
-    "phone" to phone,
-    "role" to role.toFirestoreValue(),
+    "name"      to name,
+    "email"     to email,
+    "phone"     to phone,
+    "role"      to role.toFirestoreValue(),
     "companyId" to companyId,
-    "fcmToken" to fcmToken,
+    "fcmToken"  to fcmToken,
+    "exitPin"   to exitPin,
     "createdAt" to System.currentTimeMillis()
 )
 

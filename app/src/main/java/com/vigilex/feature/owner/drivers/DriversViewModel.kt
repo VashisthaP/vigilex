@@ -13,12 +13,15 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 
 data class DriversUiState(
     val drivers: List<User> = emptyList(),
+    /** Maps driverId → active Trip (if any). Used to hide the Assign Trip button. */
+    val activeTrips: Map<String, Trip> = emptyMap(),
     val isLoading: Boolean = false,
     val successMessage: String? = null,
     val errorMessage: String? = null
@@ -34,37 +37,55 @@ class DriversViewModel @Inject constructor(
     val uiState: StateFlow<DriversUiState> = _uiState.asStateFlow()
 
     private var ownerCompanyId: String = ""
+    private var ownerId: String = ""
 
     init {
-        loadDrivers()
+        loadDriversAndTrips()
     }
 
-    private fun loadDrivers() {
+    private fun loadDriversAndTrips() {
         val uid = auth.currentUser?.uid ?: return
+        ownerId = uid
         viewModelScope.launch {
             val owner = firestore.getUser(uid) ?: return@launch
             ownerCompanyId = owner.companyId
-            firestore.observeDriversForOwner(uid, owner.companyId).collect {
-                _uiState.value = _uiState.value.copy(drivers = it)
+
+            // Combine driver list + all owner trips so we can mark which drivers are busy
+            combine(
+                firestore.observeDriversForOwner(uid, owner.companyId),
+                firestore.observeTripsForOwner(uid)
+            ) { drivers, trips ->
+                val activeMap = trips
+                    .filter { it.status == TripStatus.ACTIVE }
+                    .associateBy { it.driverId }
+                drivers to activeMap
+            }.collect { (drivers, activeMap) ->
+                _uiState.value = _uiState.value.copy(
+                    drivers     = drivers,
+                    activeTrips = activeMap
+                )
             }
         }
     }
 
     /**
-     * Registers a new driver in Firestore only — no Firebase Auth account needed.
-     * With phone OTP auth, Firebase Auth is created automatically on first OTP login.
-     * The driver's phone number is the only required identifier.
+     * Adds a driver in Firestore only.
+     * [exitPin] is a 6-digit PIN set by the owner — the driver uses it to unlock
+     * the monitoring lock screen without waiting for an owner-sent OTP.
      */
-    fun addDriver(name: String, phone: String) {
+    fun addDriver(name: String, phone: String, exitPin: String) {
         if (name.isBlank() || phone.isBlank()) {
             _uiState.value = _uiState.value.copy(errorMessage = "Name and phone are required")
+            return
+        }
+        if (exitPin.length != 6 || !exitPin.all { it.isDigit() }) {
+            _uiState.value = _uiState.value.copy(errorMessage = "Exit PIN must be exactly 6 digits")
             return
         }
         val normalizedPhone = normalizePhone(phone)
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
             runCatching {
-                // Generate a placeholder UID — will be replaced with real Firebase Auth UID on first login
                 val placeholderUid = "pending_${normalizedPhone.replace("+", "")}"
                 firestore.createUser(
                     User(
@@ -73,17 +94,18 @@ class DriversViewModel @Inject constructor(
                         email     = "",
                         phone     = normalizedPhone,
                         role      = Role.DRIVER,
-                        companyId = ownerCompanyId
+                        companyId = ownerCompanyId,
+                        exitPin   = exitPin
                     )
                 )
                 _uiState.value = _uiState.value.copy(
                     isLoading      = false,
-                    successMessage = "Driver '$name' added. They can now log in using their phone number."
+                    successMessage = "Driver '$name' added."
                 )
             }.onFailure { e ->
                 _uiState.value = _uiState.value.copy(
-                    isLoading     = false,
-                    errorMessage  = e.message ?: "Failed to add driver"
+                    isLoading    = false,
+                    errorMessage = e.message ?: "Failed to add driver"
                 )
             }
         }
@@ -100,20 +122,19 @@ class DriversViewModel @Inject constructor(
     }
 
     fun assignTrip(driverId: String, destinationName: String, destLat: Double, destLng: Double) {
-        val ownerId = auth.currentUser?.uid ?: return
         viewModelScope.launch {
             runCatching {
                 firestore.createTrip(
                     Trip(
-                        driverId = driverId,
-                        ownerId = ownerId,
-                        companyId = ownerCompanyId,
+                        driverId    = driverId,
+                        ownerId     = ownerId,
+                        companyId   = ownerCompanyId,
                         destination = Destination(destinationName, destLat, destLng),
-                        startTime = System.currentTimeMillis(),
-                        status = TripStatus.ACTIVE
+                        startTime   = System.currentTimeMillis(),
+                        status      = TripStatus.ACTIVE
                     )
                 )
-                _uiState.value = _uiState.value.copy(successMessage = "Trip assigned successfully!")
+                _uiState.value = _uiState.value.copy(successMessage = "Trip assigned!")
             }.onFailure {
                 _uiState.value = _uiState.value.copy(errorMessage = it.message)
             }
@@ -123,5 +144,4 @@ class DriversViewModel @Inject constructor(
     fun clearMessages() {
         _uiState.value = _uiState.value.copy(successMessage = null, errorMessage = null)
     }
-
 }
