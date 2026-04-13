@@ -27,6 +27,9 @@ fun VigileXNavGraph(navController: NavHostController) {
     // ── Sign-out helper: clears Firebase session then returns to splash
     // (splash sees NoSession → immediately goes to login)
     val signOut: () -> Unit = {
+        // Stop the monitoring foreground service before signing out
+        val ctx = navController.context.applicationContext
+        ctx.stopService(android.content.Intent(ctx, com.vigilex.feature.driver.service.MonitoringForegroundService::class.java))
         FirebaseAuth.getInstance().signOut()
         navController.navigate(Routes.SPLASH) {
             popUpTo(0) { inclusive = true }

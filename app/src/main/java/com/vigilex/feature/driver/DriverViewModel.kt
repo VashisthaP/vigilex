@@ -57,16 +57,35 @@ class DriverViewModel @Inject constructor(
     // Cached exit PIN from Firestore — allows driver to unlock without owner OTP.
     private var driverExitPin: String = ""
 
+    private var permissionsReady = false
+    private var observingTrip = false
+
     init {
         observeActiveTrip()
         checkDisclaimerShown()
         loadDriverExitPin()
     }
 
+    /** Called by DriverHomeScreen once all runtime permissions (camera, location) are granted. */
+    fun onPermissionsGranted() {
+        permissionsReady = true
+        // If a trip was already observed before permissions, start the service now
+        val trip = _uiState.value.trip
+        if (trip != null && trip.status == TripStatus.ACTIVE) {
+            startMonitoringService(trip.id, trip.companyId)
+        }
+    }
+
     private fun loadDriverExitPin() {
         val uid = auth.currentUser?.uid ?: return
+        val phone = auth.currentUser?.phoneNumber ?: ""
         viewModelScope.launch {
-            driverExitPin = runCatching { firestore.getUser(uid)?.exitPin ?: "" }.getOrDefault("")
+            // Try UID lookup first (migrated doc), then fall back to phone lookup (pending_ doc)
+            var pin = runCatching { firestore.getUser(uid)?.exitPin }.getOrNull() ?: ""
+            if (pin.isBlank() && phone.isNotBlank()) {
+                pin = runCatching { firestore.getUserByPhone(phone)?.exitPin }.getOrNull() ?: ""
+            }
+            driverExitPin = pin
         }
     }
 
@@ -90,7 +109,9 @@ class DriverViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(trip = trip)
                 if (trip != null && trip.status == TripStatus.ACTIVE) {
                     hadActiveTrip = true
-                    startMonitoringService(trip.id, trip.companyId)
+                    if (permissionsReady) {
+                        startMonitoringService(trip.id, trip.companyId)
+                    }
                     registerGeofence(trip)
                 } else if (hadActiveTrip && (trip == null || trip.status == TripStatus.COMPLETE)) {
                     // Only complete the session if a trip was previously active —
@@ -201,6 +222,13 @@ class DriverViewModel @Inject constructor(
 
     fun dismissOtpDialog() {
         _uiState.value = _uiState.value.copy(showOtpDialog = false, otpError = null)
+    }
+
+    /** Validates the exit PIN and calls back with the result on the main thread. */
+    fun validateExitPin(pin: String, onResult: (Boolean) -> Unit) {
+        val valid = driverExitPin.isNotBlank() && pin == driverExitPin
+        if (valid) stopMonitoringService()
+        onResult(valid)
     }
 
     fun updateMonitoringStatus(status: MonitoringStatus) {

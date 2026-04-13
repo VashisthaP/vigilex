@@ -240,7 +240,7 @@ class DrowsinessAnalyzer(
         private const val HEAD_EULER_Y_DEG = 25f
         private const val LATERAL_ACCEL_THRESHOLD_MS2 = 4f        // m/s² — sustained swerve
         private const val LATERAL_SPIKE_DURATION_MS = 2_000L      // 2 seconds sustained
-        private const val SPEED_GATE_KMH = 20f
+        private const val SPEED_GATE_KMH = 0f   // TODO: set back to 20f for production
         private const val CALIBRATION_WINDOW_MS = 60_000L         // 60 seconds
         private const val EVENT_DEBOUNCE_MS = 30_000L              // 30 seconds between events
         private const val COMBINED_WINDOW_MS = 10_000L             // 10s window for COMBINED

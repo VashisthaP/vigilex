@@ -23,9 +23,14 @@ android {
         applicationId = "com.vigilex"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Ensure 64-bit support for modern phones (S24, OnePlus, etc.)
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        }
 
         // Inject keys into BuildConfig and manifest placeholders
         buildConfigField("String", "MAPS_API_KEY", "\"${localProperties["MAPS_API_KEY"] ?: ""}\"")
@@ -34,9 +39,23 @@ android {
         manifestPlaceholders["mapsApiKey"] = localProperties["MAPS_API_KEY"] ?: ""
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile     = file(localProperties["KEYSTORE_PATH"] as? String ?: "")
+            storePassword = localProperties["KEYSTORE_PASSWORD"] as? String ?: ""
+            keyAlias      = localProperties["KEY_ALIAS"] as? String ?: ""
+            keyPassword   = localProperties["KEY_PASSWORD"] as? String ?: ""
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = true
+            isMinifyEnabled = false
+            signingConfig   = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

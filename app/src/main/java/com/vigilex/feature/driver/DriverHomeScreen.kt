@@ -25,7 +25,9 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,7 +60,10 @@ fun DriverHomeScreen(
 
     when (setupStep) {
         SetupStep.PERMISSIONS -> PermissionsStep(
-            onPermissionsGranted = { setupStep = SetupStep.BLUETOOTH }
+            onPermissionsGranted = {
+                viewModel.onPermissionsGranted()
+                setupStep = SetupStep.BLUETOOTH
+            }
         )
         SetupStep.BLUETOOTH   -> BluetoothStep(
             onContinue = { setupStep = SetupStep.MONITORING }
@@ -351,6 +356,10 @@ private fun MonitoringScreen(
     val uiState by viewModel.uiState.collectAsState()
     val view    = LocalView.current
     var showSignOutConfirm by remember { mutableStateOf(false) }
+    var showPinDialog      by remember { mutableStateOf(false) }
+    var pinInput           by remember { mutableStateOf("") }
+    var pinError           by remember { mutableStateOf<String?>(null) }
+    val hasActiveTrip      = uiState.trip != null && uiState.trip?.status == com.vigilex.core.model.TripStatus.ACTIVE
 
     // Keep screen on — brightness unchanged (use device setting)
     DisposableEffect(Unit) {
@@ -437,25 +446,114 @@ private fun MonitoringScreen(
 
         // Sign-out confirmation dialog
         if (showSignOutConfirm) {
+            if (hasActiveTrip) {
+                // Active trip — warn driver and require PIN or owner action
+                AlertDialog(
+                    onDismissRequest = { showSignOutConfirm = false },
+                    containerColor   = Color(0xFF1A2A3A),
+                    title   = { Text("Trip In Progress", color = Color.Red) },
+                    text    = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "You haven't reached your destination yet. Monitoring cannot be stopped during an active trip.",
+                                color = MaterialTheme.colorScheme.onSurface.copy(0.75f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                "Ask your owner to delete the trip, or enter your 6-digit exit PIN to force sign out.",
+                                color = MaterialTheme.colorScheme.onSurface.copy(0.5f),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { showSignOutConfirm = false; showPinDialog = true; pinInput = ""; pinError = null },
+                            colors  = ButtonDefaults.buttonColors(containerColor = Amber)
+                        ) { Text("Enter PIN", color = NavyDark) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showSignOutConfirm = false }) {
+                            Text("Cancel", color = Amber)
+                        }
+                    }
+                )
+            } else {
+                // No active trip — simple confirmation
+                AlertDialog(
+                    onDismissRequest = { showSignOutConfirm = false },
+                    containerColor   = Color(0xFF1A2A3A),
+                    title   = { Text("Sign Out?", color = Amber) },
+                    text    = {
+                        Text(
+                            "Are you sure you want to sign out? Monitoring will stop.",
+                            color = MaterialTheme.colorScheme.onSurface.copy(0.75f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { showSignOutConfirm = false; onSignOut() },
+                            colors  = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.8f))
+                        ) { Text("Sign Out", color = Color.White) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showSignOutConfirm = false }) {
+                            Text("Cancel", color = Amber)
+                        }
+                    }
+                )
+            }
+        }
+
+        // PIN entry dialog (for active trip sign-out)
+        if (showPinDialog) {
             AlertDialog(
-                onDismissRequest = { showSignOutConfirm = false },
+                onDismissRequest = { showPinDialog = false },
                 containerColor   = Color(0xFF1A2A3A),
-                title   = { Text("Sign Out?", color = Amber) },
-                text    = {
-                    Text(
-                        "Are you sure you want to sign out? Monitoring will stop.",
-                        color = MaterialTheme.colorScheme.onSurface.copy(0.75f),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                properties       = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+                title = { Text("Enter Exit PIN", color = Amber) },
+                text  = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value         = pinInput,
+                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pinInput = it },
+                            label         = { Text("6-digit PIN") },
+                            singleLine    = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor     = Color.White,
+                                unfocusedTextColor   = Color.White,
+                                focusedBorderColor   = Amber,
+                                unfocusedBorderColor = Color.White.copy(0.3f),
+                                focusedLabelColor    = Amber,
+                                unfocusedLabelColor  = Color.White.copy(0.5f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (pinError != null) {
+                            Text(pinError!!, color = Color.Red, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 },
                 confirmButton = {
                     Button(
-                        onClick = onSignOut,
+                        onClick = {
+                            viewModel.validateExitPin(pinInput) { valid ->
+                                if (valid) {
+                                    showPinDialog = false
+                                    onSignOut()
+                                } else {
+                                    pinError = "Invalid PIN. Contact your owner."
+                                }
+                            }
+                        },
+                        enabled = pinInput.length == 6,
                         colors  = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.8f))
-                    ) { Text("Sign Out", color = Color.White) }
+                    ) { Text("Force Sign Out", color = Color.White) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showSignOutConfirm = false }) {
+                    TextButton(onClick = { showPinDialog = false }) {
                         Text("Cancel", color = Amber)
                     }
                 }
