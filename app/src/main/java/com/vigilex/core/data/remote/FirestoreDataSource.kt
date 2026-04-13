@@ -64,6 +64,10 @@ class FirestoreDataSource @Inject constructor(
         db.collection("users").document(uid).update("fcmToken", token).await()
     }
 
+    suspend fun deleteUser(uid: String) {
+        db.collection("users").document(uid).delete().await()
+    }
+
     fun observeDriversForOwner(ownerId: String, companyId: String): Flow<List<User>> =
         callbackFlow {
             val reg = db.collection("users")
@@ -119,6 +123,10 @@ class FirestoreDataSource @Inject constructor(
     suspend fun updateTripStatus(tripId: String, status: TripStatus) {
         db.collection("trips").document(tripId)
             .update("status", status.toFirestoreValue()).await()
+    }
+
+    suspend fun deleteTrip(tripId: String) {
+        db.collection("trips").document(tripId).delete().await()
     }
 
     suspend fun incrementTripCounter(tripId: String, field: String) {

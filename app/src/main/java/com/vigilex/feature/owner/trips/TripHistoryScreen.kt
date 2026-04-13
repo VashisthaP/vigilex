@@ -8,11 +8,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.vigilex.core.model.TripStatus
@@ -33,6 +35,7 @@ fun TripHistoryScreen(
 ) {
     val trips by viewModel.trips.collectAsState()
     var filter by remember { mutableStateOf<TripStatus?>(null) }
+    var showDeleteDialog by remember { mutableStateOf<com.vigilex.core.model.Trip?>(null) }
 
     val filtered = if (filter == null) trips else trips.filter { it.status == filter }
 
@@ -68,15 +71,44 @@ fun TripHistoryScreen(
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filtered.sortedByDescending { it.startTime }) { trip ->
-                    TripRow(trip = trip, onClick = { onTripClick(trip.id) })
+                    TripRow(
+                        trip     = trip,
+                        onClick  = { onTripClick(trip.id) },
+                        onDelete = { showDeleteDialog = trip }
+                    )
                 }
+            }
+
+            showDeleteDialog?.let { trip ->
+                AlertDialog(
+                    onDismissRequest = { showDeleteDialog = null },
+                    containerColor   = Color(0xFF1A2A3A),
+                    title = { Text("Delete Trip?", color = Color.Red) },
+                    text  = {
+                        Text(
+                            "Delete trip to \"${trip.destination.name}\"? This cannot be undone.",
+                            color = Color.White.copy(0.7f)
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { viewModel.deleteTrip(trip.id); showDeleteDialog = null },
+                            colors  = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.8f))
+                        ) { Text("Delete", color = Color.White) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDeleteDialog = null }) {
+                            Text("Cancel", color = com.vigilex.ui.theme.Amber)
+                        }
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun TripRow(trip: com.vigilex.core.model.Trip, onClick: () -> Unit) {
+private fun TripRow(trip: com.vigilex.core.model.Trip, onClick: () -> Unit, onDelete: () -> Unit) {
     val sdf = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
     val statusType = when (trip.status) {
         TripStatus.ACTIVE -> StatusType.ACTIVE
@@ -92,12 +124,18 @@ private fun TripRow(trip: com.vigilex.core.model.Trip, onClick: () -> Unit) {
         shape = RoundedCornerShape(10.dp)
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(trip.destination.name, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    trip.destination.name,
+                    color    = Color.White,
+                    style    = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     sdf.format(Date(trip.startTime)),
                     color = Color.White.copy(alpha = 0.4f),
@@ -110,6 +148,9 @@ private fun TripRow(trip: com.vigilex.core.model.Trip, onClick: () -> Unit) {
                 )
             }
             StatusBadge(type = statusType)
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete trip", tint = Color.Red.copy(0.6f))
+            }
         }
     }
 }

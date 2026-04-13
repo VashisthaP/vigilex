@@ -30,7 +30,7 @@ import android.app.PendingIntent
 
 data class DriverUiState(
     val trip: Trip? = null,
-    val monitoringStatus: MonitoringStatus = MonitoringStatus.Calibrating(0f),
+    val monitoringStatus: MonitoringStatus = MonitoringStatus.Paused,
     val showOtpDialog: Boolean = false,
     val otpError: String? = null,
     val isTripComplete: Boolean = false,

@@ -69,7 +69,7 @@ class DrowsinessAnalyzer(
     private var lateralSpikeStartMs: Long = -1L
 
     // ── Calibration ─────────────────────────────────────────────────────────
-    private val calibrationStartMs = System.currentTimeMillis()
+    private var calibrationStartMs = -1L   // set on first frame, not at construction
     private val eyeOpennessSamples = mutableListOf<Float>()
     private var calibrated = false
     private var eyeThreshold = DEFAULT_EYE_THRESHOLD    // adjusted after calibration
@@ -145,6 +145,7 @@ class DrowsinessAnalyzer(
 
     private fun processFace(leftEye: Float, rightEye: Float, eulerY: Float, eulerZ: Float) {
         val now = System.currentTimeMillis()
+        if (calibrationStartMs < 0) calibrationStartMs = now  // start timer on first real frame
         val sinceStart = now - calibrationStartMs
         val belowSpeedGate = currentSpeedKmh < SPEED_GATE_KMH
 

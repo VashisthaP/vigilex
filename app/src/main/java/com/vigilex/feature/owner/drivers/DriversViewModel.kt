@@ -141,6 +141,13 @@ class DriversViewModel @Inject constructor(
         }
     }
 
+    fun deleteDriver(uid: String) {
+        viewModelScope.launch {
+            runCatching { firestore.deleteUser(uid) }
+                .onFailure { _uiState.value = _uiState.value.copy(errorMessage = it.message) }
+        }
+    }
+
     fun clearMessages() {
         _uiState.value = _uiState.value.copy(successMessage = null, errorMessage = null)
     }

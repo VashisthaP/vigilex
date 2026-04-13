@@ -1,6 +1,7 @@
 package com.vigilex.feature.owner.drivers
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -8,6 +9,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -29,8 +31,9 @@ fun DriversManagementScreen(
     viewModel: DriversViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    var showAddDialog    by remember { mutableStateOf(false) }
-    var showAssignDialog by remember { mutableStateOf<User?>(null) }
+    var showAddDialog      by remember { mutableStateOf(false) }
+    var showAssignDialog   by remember { mutableStateOf<User?>(null) }
+    var showDeleteDialog   by remember { mutableStateOf<User?>(null) }
 
     LaunchedEffect(uiState.successMessage) {
         if (uiState.successMessage != null) viewModel.clearMessages()
@@ -59,9 +62,10 @@ fun DriversManagementScreen(
         ) {
             items(uiState.drivers) { driver ->
                 DriverRow(
-                    driver      = driver,
-                    activeTrip  = uiState.activeTrips[driver.uid],
-                    onAssignTrip = { showAssignDialog = driver }
+                    driver       = driver,
+                    activeTrip   = uiState.activeTrips[driver.uid],
+                    onAssignTrip = { showAssignDialog = driver },
+                    onDelete     = { showDeleteDialog = driver }
                 )
             }
         }
@@ -76,6 +80,22 @@ fun DriversManagementScreen(
                 showAddDialog = false
             },
             onDismiss = { showAddDialog = false; viewModel.clearMessages() }
+        )
+    }
+
+    showDeleteDialog?.let { driver ->
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = null },
+            containerColor   = Color(0xFF1A2A3A),
+            title = { Text("Delete Driver?", color = Color.Red) },
+            text  = { Text("Remove ${driver.name} permanently? This cannot be undone.", color = Color.White.copy(0.7f)) },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.deleteDriver(driver.uid); showDeleteDialog = null },
+                    colors  = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.8f))
+                ) { Text("Delete", color = Color.White) }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteDialog = null }) { Text("Cancel", color = Amber) } }
         )
     }
 
@@ -94,15 +114,19 @@ fun DriversManagementScreen(
 // ── Driver row ────────────────────────────────────────────────────────────────
 
 @Composable
-private fun DriverRow(driver: User, activeTrip: Trip?, onAssignTrip: () -> Unit) {
+private fun DriverRow(driver: User, activeTrip: Trip?, onAssignTrip: () -> Unit, onDelete: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors   = CardDefaults.cardColors(containerColor = NavyMid),
         shape    = RoundedCornerShape(10.dp)
     ) {
-        Row(modifier = Modifier.padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(driver.name,  color = Color.White,            style = MaterialTheme.typography.bodyMedium)
+                Text(driver.name,  color = Color.White,             style = MaterialTheme.typography.bodyMedium)
                 Text(driver.phone, color = Color.White.copy(0.45f), style = MaterialTheme.typography.bodySmall)
                 if (activeTrip != null) {
                     Text(
@@ -117,7 +141,6 @@ private fun DriverRow(driver: User, activeTrip: Trip?, onAssignTrip: () -> Unit)
                     Text("Assign Trip", color = Amber, style = MaterialTheme.typography.labelSmall)
                 }
             } else {
-                // Driver is already on a trip — show status chip instead
                 Surface(
                     color = Amber.copy(alpha = 0.15f),
                     shape = RoundedCornerShape(8.dp)
@@ -129,6 +152,9 @@ private fun DriverRow(driver: User, activeTrip: Trip?, onAssignTrip: () -> Unit)
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                 }
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete driver", tint = Color.Red.copy(0.7f))
             }
         }
     }

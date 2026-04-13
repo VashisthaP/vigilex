@@ -35,6 +35,10 @@ class TripHistoryViewModel @Inject constructor(
         }
     }
 
+    fun deleteTrip(tripId: String) {
+        viewModelScope.launch { runCatching { firestore.deleteTrip(tripId) } }
+    }
+
     fun loadEventsForTrip(tripId: String) {
         _isLoadingEvents.value = true
         _selectedTripEvents.value = emptyList()

@@ -114,8 +114,9 @@ fun PlacesAutocompleteField(
                         }
                     },
                     onClick = {
-                        showDropdown = false
-                        query        = primary   // show primary text in field while fetching
+                        showDropdown    = false
+                        selectedDisplay = primary  // block new searches BEFORE changing query
+                        query           = primary  // show primary text in field while fetching
 
                         // Fetch full place details for lat/lng
                         val fields  = listOf(Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS)

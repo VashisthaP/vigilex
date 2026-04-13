@@ -41,10 +41,13 @@ fun DriverDetailScreen(
     LaunchedEffect(driverId, tripId) { viewModel.load(driverId, tripId) }
 
     val location = uiState.trip?.lastLocation
+    // Default: centre of India so the map doesn't show an empty ocean when location hasn't arrived yet
+    val defaultLatLng = LatLng(20.5937, 78.9629)
     val cameraState = rememberCameraPositionState {
-        if (location != null) {
-            position = CameraPosition.fromLatLngZoom(LatLng(location.lat, location.lng), 14f)
-        }
+        position = if (location != null)
+            CameraPosition.fromLatLngZoom(LatLng(location.lat, location.lng), 14f)
+        else
+            CameraPosition.fromLatLngZoom(defaultLatLng, 5f)
     }
 
     // Keep map camera centred on driver's live location
