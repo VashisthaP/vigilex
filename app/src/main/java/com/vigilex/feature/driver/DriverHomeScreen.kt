@@ -37,7 +37,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.vigilex.R
@@ -350,27 +349,21 @@ private fun MonitoringScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val view    = LocalView.current
+    var showSignOutConfirm by remember { mutableStateOf(false) }
 
-    // Keep screen on at near-zero brightness — headless CameraX workaround
+    // Keep screen on — brightness unchanged (use device setting)
     DisposableEffect(Unit) {
         val window = (view.context as? androidx.activity.ComponentActivity)?.window
         window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window?.attributes = window?.attributes?.apply { screenBrightness = 0.01f }
         onDispose {
             window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            window?.attributes = window?.attributes?.apply { screenBrightness = -1f }
         }
     }
 
-    // Block hardware back — driver cannot exit without OTP or arrival
-    BackHandler(enabled = true) { viewModel.requestOtpExit() }
+    // Hardware back → ask for sign-out confirmation instead of OTP
+    BackHandler(enabled = true) { showSignOutConfirm = true }
 
     val showAlert = uiState.monitoringStatus is MonitoringStatus.Alert
-
-    // Auto sign-out when trip is complete (geofence arrival or OTP unlock)
-    LaunchedEffect(uiState.isTripComplete) {
-        if (uiState.isTripComplete) onSignOut()
-    }
 
     Box(modifier = Modifier.fillMaxSize().background(NavyDark)) {
 
@@ -384,38 +377,55 @@ private fun MonitoringScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Destination
+            // Active trip destination (if assigned) — informational only
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.height(48.dp))
-                Text(
-                    "Destination",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    style = MaterialTheme.typography.labelMedium
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text      = uiState.trip?.destination?.name ?: "Waiting for assignment…",
-                    color     = Amber,
-                    fontSize  = 28.sp,
-                    style     = MaterialTheme.typography.headlineMedium,
-                    textAlign = TextAlign.Center
-                )
+                if (uiState.trip?.destination?.name?.isNotBlank() == true) {
+                    Text(
+                        "Destination",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text      = uiState.trip!!.destination.name,
+                        color     = Amber,
+                        fontSize  = 28.sp,
+                        style     = MaterialTheme.typography.headlineMedium,
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    // No trip assigned yet — monitoring runs regardless
+                    Text(
+                        "Monitoring Active",
+                        color = Amber,
+                        fontSize  = 22.sp,
+                        style     = MaterialTheme.typography.headlineSmall,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
 
             // Status dot
             MonitoringStatusDot(status = uiState.monitoringStatus)
 
-            // Speed + exit
+            // Speed + sign-out
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 val speedKmh = ((uiState.trip?.lastLocation?.speed ?: 0f) * 3.6f).toInt()
-                Text("$speedKmh km/h", color = MaterialTheme.colorScheme.onSurface.copy(0.4f), style = MaterialTheme.typography.bodySmall)
+                if (speedKmh > 0) {
+                    Text(
+                        "$speedKmh km/h",
+                        color = MaterialTheme.colorScheme.onSurface.copy(0.4f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
                 TextButton(
-                    onClick  = { viewModel.requestOtpExit() },
+                    onClick  = { showSignOutConfirm = true },
                     modifier = Modifier.fillMaxWidth(0.6f)
                 ) {
                     Text(
-                        "Request OTP to Exit",
+                        "Sign Out",
                         color = MaterialTheme.colorScheme.onSurface.copy(0.35f),
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -424,12 +434,30 @@ private fun MonitoringScreen(
             }
         }
 
-        // OTP dialog
-        if (uiState.showOtpDialog) {
-            OtpEntryDialog(
-                error     = uiState.otpError,
-                onSubmit  = { viewModel.submitOtp(it) },
-                onDismiss = { viewModel.dismissOtpDialog() }
+        // Sign-out confirmation dialog
+        if (showSignOutConfirm) {
+            AlertDialog(
+                onDismissRequest = { showSignOutConfirm = false },
+                containerColor   = Color(0xFF1A2A3A),
+                title   = { Text("Sign Out?", color = Amber) },
+                text    = {
+                    Text(
+                        "Are you sure you want to sign out? Monitoring will stop.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(0.75f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = onSignOut,
+                        colors  = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.8f))
+                    ) { Text("Sign Out", color = Color.White) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSignOutConfirm = false }) {
+                        Text("Cancel", color = Amber)
+                    }
+                }
             )
         }
 
@@ -488,62 +516,3 @@ private fun MonitoringStatusDot(status: MonitoringStatus) {
     }
 }
 
-@Composable
-fun OtpEntryDialog(
-    error: String?,
-    onSubmit: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var otpValue    by remember { mutableStateOf("") }
-    var secondsLeft by remember { mutableIntStateOf(300) }
-
-    LaunchedEffect(Unit) {
-        while (secondsLeft > 0) { kotlinx.coroutines.delay(1_000L); secondsLeft-- }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title   = { Text("Enter OTP", color = Amber) },
-        text    = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    "OTP sent to your owner. Ask them to share it.",
-                    color = MaterialTheme.colorScheme.onSurface.copy(0.7f),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                val minutes = secondsLeft / 60; val seconds = secondsLeft % 60
-                Text(
-                    "Expires in %d:%02d".format(minutes, seconds),
-                    color = if (secondsLeft < 60) Color.Red else MaterialTheme.colorScheme.onSurface.copy(0.5f),
-                    style = MaterialTheme.typography.labelSmall
-                )
-                OutlinedTextField(
-                    value         = otpValue,
-                    onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) otpValue = it },
-                    label         = { Text("6-digit OTP") },
-                    singleLine    = true,
-                    isError       = error != null,
-                    colors        = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Amber,
-                        errorBorderColor   = Color.Red
-                    )
-                )
-                if (error != null) Text(error, color = Color.Red, style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick  = { onSubmit(otpValue) },
-                enabled  = otpValue.length == 6 && secondsLeft > 0,
-                colors   = ButtonDefaults.buttonColors(containerColor = Amber)
-            ) { Text("Verify", color = NavyDark) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = MaterialTheme.colorScheme.onSurface.copy(0.5f))
-            }
-        },
-        containerColor = Color(0xFF1A2A3A),
-        properties     = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
-    )
-}
