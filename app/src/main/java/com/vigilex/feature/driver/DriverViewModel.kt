@@ -49,6 +49,11 @@ class DriverViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(DriverUiState())
     val uiState: StateFlow<DriverUiState> = _uiState.asStateFlow()
 
+    // Tracks whether a trip was seen as ACTIVE in this session.
+    // Without this guard, the first Firestore snapshot (null — no trips yet)
+    // would immediately set isTripComplete = true and sign the driver out.
+    private var hadActiveTrip = false
+
     init {
         observeActiveTrip()
         checkDisclaimerShown()
@@ -73,9 +78,12 @@ class DriverViewModel @Inject constructor(
             firestore.observeActiveTrip(uid).collect { trip ->
                 _uiState.value = _uiState.value.copy(trip = trip)
                 if (trip != null && trip.status == TripStatus.ACTIVE) {
+                    hadActiveTrip = true
                     startMonitoringService(trip.id, trip.companyId)
                     registerGeofence(trip)
-                } else if (trip == null || trip.status == TripStatus.COMPLETE) {
+                } else if (hadActiveTrip && (trip == null || trip.status == TripStatus.COMPLETE)) {
+                    // Only complete the session if a trip was previously active —
+                    // prevents signing out when no trips exist on first login.
                     _uiState.value = _uiState.value.copy(isTripComplete = true)
                     stopMonitoringService()
                 }
