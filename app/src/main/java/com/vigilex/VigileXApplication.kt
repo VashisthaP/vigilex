@@ -10,7 +10,9 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.google.android.libraries.places.api.Places
 import com.google.firebase.FirebaseApp
+import com.vigilex.BuildConfig
 import com.vigilex.core.worker.SyncEventsWorker
 import dagger.hilt.android.HiltAndroidApp
 import java.util.concurrent.TimeUnit
@@ -21,6 +23,9 @@ class VigileXApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         FirebaseApp.initializeApp(this)
+        if (!Places.isInitialized()) {
+            Places.initialize(applicationContext, BuildConfig.MAPS_API_KEY)
+        }
         createNotificationChannels()
         scheduleSyncWorker()
     }

@@ -8,7 +8,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,26 +17,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.vigilex.core.model.Trip
 import com.vigilex.core.model.User
+import com.vigilex.ui.components.PlacesAutocompleteField
+import com.vigilex.ui.components.PlaceResult
 import com.vigilex.ui.theme.Amber
 import com.vigilex.ui.theme.NavyDark
 import com.vigilex.ui.theme.NavyMid
-
-// ── Preset destinations (name, lat, lng) ─────────────────────────────────────
-private val PRESET_DESTINATIONS = listOf(
-    Triple("Noida Sector 62",       28.6270, 77.3680),
-    Triple("Gurugram Cyber City",   28.4950, 77.0860),
-    Triple("Connaught Place, Delhi",28.6315, 77.2167),
-    Triple("IGI Airport, Delhi",    28.5562, 77.1000),
-    Triple("Faridabad Sector 15",   28.4089, 77.3178),
-    Triple("Ghaziabad Raj Nagar",   28.6692, 77.4538),
-    Triple("Dwarka Sector 21",      28.5530, 77.0588),
-    Triple("Noida Sector 18",       28.5706, 77.3219),
-    Triple("Greater Noida",         28.4744, 77.5040),
-    Triple("Meerut Bus Stand",      28.9845, 77.7064),
-    Triple("Agra Taj Mahal Gate",   27.1751, 78.0421),
-    Triple("Jaipur Sindhi Camp",    26.9124, 75.7873),
-    Triple("Custom destination",    0.0,     0.0)       // free-text entry
-)
 
 @Composable
 fun DriversManagementScreen(
@@ -213,20 +197,15 @@ private fun AddDriverDialog(
     )
 }
 
-// ── Assign trip dialog — dropdown destination ────────────────────────────────
+// ── Assign trip dialog — Google Places autocomplete ──────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AssignTripDialog(
     driverName: String,
     onConfirm:  (name: String, lat: Double, lng: Double) -> Unit,
     onDismiss:  () -> Unit
 ) {
-    var expanded    by remember { mutableStateOf(false) }
-    var selected    by remember { mutableStateOf(PRESET_DESTINATIONS.first()) }
-    var customDest  by remember { mutableStateOf("") }
-
-    val isCustom = selected.first == "Custom destination"
+    var selectedPlace by remember { mutableStateOf<PlaceResult?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -234,54 +213,31 @@ private fun AssignTripDialog(
         title = { Text("Assign Trip — $driverName", color = Amber) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Destination dropdown
-                ExposedDropdownMenuBox(
-                    expanded        = expanded,
-                    onExpandedChange = { expanded = !expanded }
-                ) {
-                    OutlinedTextField(
-                        value         = selected.first,
-                        onValueChange = {},
-                        readOnly      = true,
-                        label         = { Text("Destination") },
-                        trailingIcon  = {
-                            Icon(Icons.Default.ArrowDropDown, null,
-                                tint = Amber)
-                        },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded        = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        PRESET_DESTINATIONS.forEach { dest ->
-                            DropdownMenuItem(
-                                text    = { Text(dest.first, color = Color.White) },
-                                onClick = { selected = dest; expanded = false },
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Show custom entry field only when "Custom destination" is chosen
-                if (isCustom) {
-                    OutlinedTextField(
-                        value         = customDest,
-                        onValueChange = { customDest = it },
-                        label         = { Text("Custom destination name") },
-                        singleLine    = true,
-                        modifier      = Modifier.fillMaxWidth()
+                Text(
+                    "Search for the driver's destination using Google Maps.",
+                    color = Color.White.copy(0.5f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                PlacesAutocompleteField(
+                    label           = "Search destination",
+                    modifier        = Modifier.fillMaxWidth(),
+                    onPlaceSelected = { selectedPlace = it }
+                )
+                if (selectedPlace != null) {
+                    Text(
+                        "📍 ${selectedPlace!!.address}",
+                        color = Amber.copy(0.8f),
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
         },
         confirmButton = {
-            val destName = if (isCustom) customDest else selected.first
-            val enabled  = if (isCustom) customDest.isNotBlank() else true
             Button(
-                onClick  = { onConfirm(destName, selected.second, selected.third) },
-                enabled  = enabled,
+                onClick  = {
+                    selectedPlace?.let { onConfirm(it.name, it.latLng.latitude, it.latLng.longitude) }
+                },
+                enabled  = selectedPlace != null,
                 colors   = ButtonDefaults.buttonColors(containerColor = Amber)
             ) { Text("Assign", color = NavyDark) }
         },

@@ -56,24 +56,29 @@ class SuperAdminViewModel @Inject constructor(
 
     /**
      * Creates a new company and registers the owner in Firestore.
-     * No Firebase Auth account is created here — the owner logs in via phone OTP.
-     * Firebase Auth UID is assigned automatically on their first OTP login.
+     * No Firebase Auth account is created — the owner logs in via phone OTP.
+     * [ownerPin] is a 6-digit PIN set by the super admin and shared with the owner.
      */
     fun addCompany(
         companyName: String,
         ownerName:   String,
-        ownerPhone:  String
+        ownerPhone:  String,
+        ownerPin:    String
     ) {
         if (companyName.isBlank() || ownerName.isBlank() || ownerPhone.isBlank()) {
             _uiState.value = _uiState.value.copy(error = "All fields are required")
+            return
+        }
+        if (ownerPin.length != 6 || !ownerPin.all { it.isDigit() }) {
+            _uiState.value = _uiState.value.copy(error = "Access PIN must be exactly 6 digits")
             return
         }
         val normalizedPhone = normalizePhone(ownerPhone)
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             runCatching {
-                val companyId       = UUID.randomUUID().toString()
-                val placeholderUid  = "pending_${normalizedPhone.replace("+", "")}"
+                val companyId      = UUID.randomUUID().toString()
+                val placeholderUid = "pending_${normalizedPhone.replace("+", "")}"
 
                 firestore.createCompany(
                     Company(
@@ -90,12 +95,13 @@ class SuperAdminViewModel @Inject constructor(
                         email     = "",
                         phone     = normalizedPhone,
                         role      = Role.OWNER,
-                        companyId = companyId
+                        companyId = companyId,
+                        exitPin   = ownerPin
                     )
                 )
                 _uiState.value = _uiState.value.copy(
                     isLoading      = false,
-                    successMessage = "Company '$companyName' created. Owner can now log in via their phone number."
+                    successMessage = "Company '$companyName' created. Owner can log in via phone OTP."
                 )
             }.onFailure {
                 _uiState.value = _uiState.value.copy(isLoading = false, error = it.message)
