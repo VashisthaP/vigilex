@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ── Network ── -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ── Camera (drowsiness / impairment monitoring) ── -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="true" />
+
+    <!-- ── Foreground Services ── -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- API 34 requires explicit foreground service types -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- ── Location ── -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Background location — shown separately in a rationale dialog -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- ── Bluetooth audio (alert via BT speaker/headset) ── -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- Required by AudioManager.startBluetoothSco() -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- ── Alerts ── -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- ── Persistence ── -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- ── Notifications (Android 13+) ── -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".VigileXApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.VigileX">
+
+        <!-- Google Maps API key injected from local.properties via build.gradle.kts -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${mapsApiKey}" />
+
+        <!-- ── Main Activity ── -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ── Monitoring Foreground Service ──
+             foregroundServiceType includes both camera and location
+             so Android 14 doesn't kill it when screen is off -->
+        <service
+            android:name=".feature.driver.service.MonitoringForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="camera|location" />
+
+        <!-- ── FCM Message Handler ── -->
+        <service
+            android:name=".feature.driver.service.VigileXMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- ── Boot Receiver — restart monitoring if a trip was active ── -->
+        <receiver
+            android:name=".feature.driver.service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ── Geofence Broadcast Receiver ── -->
+        <receiver
+            android:name=".feature.driver.service.GeofenceReceiver"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

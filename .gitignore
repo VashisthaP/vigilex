@@ -1,0 +1,26 @@
+# Sensitive — NEVER commit these
+local.properties
+google-services.json
+*.keystore
+*.jks
+app/src/main/res/raw/alert_alarm.mp3
+
+# Build output
+.gradle/
+build/
+app/build/
+*.hprof
+build_output.txt
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.kotlin/
+captures/
+.navigation/
+.externalNativeBuild/
+.cxx/
+
+# OS
+.DS_Store
+Thumbs.db

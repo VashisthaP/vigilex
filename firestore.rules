@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+    }
+
+    function isOwner(companyId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == companyId;
+    }
+
+    function isDriver(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isTripParticipant(tripData) {
+      return isSignedIn() && (
+        request.auth.uid == tripData.driverId ||
+        request.auth.uid == tripData.ownerId
+      );
+    }
+
+    // ── superadmin ─────────────────────────────────────────────────────────
+    match /superadmin/{docId} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // ── companies ──────────────────────────────────────────────────────────
+    match /companies/{companyId} {
+      allow read: if isSuperAdmin() || isOwner(companyId);
+      allow write: if isSuperAdmin();
+    }
+
+    // ── users ──────────────────────────────────────────────────────────────
+    match /users/{uid} {
+      // Users can read their own doc; owners can read their company's users; super admin reads all
+      allow read: if isSignedIn() && (
+        request.auth.uid == uid ||
+        isSuperAdmin() ||
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner' &&
+         get(/databases/$(database)/documents/users/$(uid)).data.companyId ==
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId)
+      );
+      // Users can update their own FCM token; owners create drivers; super admin writes all
+      allow update: if isSignedIn() && request.auth.uid == uid &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken']);
+      allow create: if isSuperAdmin() ||
+                    (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner');
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── trips ──────────────────────────────────────────────────────────────
+    match /trips/{tripId} {
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        isTripParticipant(resource.data)
+      );
+      allow create: if isSignedIn() &&
+                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner';
+      allow update: if isSignedIn() && (
+        isSuperAdmin() ||
+        isTripParticipant(resource.data)
+      );
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── events ─────────────────────────────────────────────────────────────
+    match /events/{eventId} {
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        request.auth.uid == resource.data.driverId ||
+        get(/databases/$(database)/documents/trips/$(resource.data.tripId)).data.ownerId == request.auth.uid
+      );
+      // Drivers write their own events; super admin writes all
+      allow create: if isSignedIn() && (
+        isSuperAdmin() ||
+        request.auth.uid == request.resource.data.driverId
+      );
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // ── otps ───────────────────────────────────────────────────────────────
+    // OTPs are write-only for drivers (to request) and owner/superadmin (to generate).
+    // Validation happens server-side (via Firestore transaction in the app).
+    match /otps/{tripId} {
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid ||
+        get(/databases/$(database)/documents/trips/$(tripId)).data.driverId == request.auth.uid
+      );
+      allow write: if isSignedIn() && (
+        isSuperAdmin() ||
+        get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid ||
+        get(/databases/$(database)/documents/trips/$(tripId)).data.driverId == request.auth.uid
+      );
+    }
+  }
+}
