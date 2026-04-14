@@ -4,44 +4,61 @@
 
 | Role | Created by | Purpose |
 |------|-----------|---------|
-| **Super Admin** | Auto-seeded on first app launch | Creates and manages fleet owners |
+| **Super Admin** | Auto-seeded on first app launch | Authorizes fleet owners |
 | **Owner** | Super Admin | Manages drivers, assigns trips, monitors fleet |
 | **Driver** | Owner | Drives with real-time drowsiness/impairment monitoring |
+
+---
+
+## Authorization Chain
+
+```
+Super Admin  --(authorizes)-->  Owner  --(adds)-->  Driver
+```
+
+**Only phone numbers pre-registered in Firestore can receive OTP and log in.**
+Unauthorized numbers are blocked at the OTP send step itself — no SMS is sent.
 
 ---
 
 ## Super Admin Flow
 
 ```
-Login (phone OTP)
+Login (phone OTP — Super Admin phone is hardcoded in BuildConfig)
     |
     v
 Super Admin Dashboard
-    |-- View all registered companies and their owners
-    |-- [+ Add Company] ->
-    |       |-- Enter: Company Name, Owner Name, Owner Phone, 6-digit Exit PIN
-    |       |-- Creates: Company doc + Owner user doc (role=OWNER, exitPin set)
-    |       |-- Owner can now login with their phone number
+    |-- Stats: Owners count, Active Trips, Total Alerts
+    |
+    |-- [Authorized Owners] list
+    |       |-- Each owner shows: Name, Email, Phone
+    |       |-- [Delete] (trash icon) -> removes owner's access
+    |
+    |-- [+ Add Owner] ->
+    |       |-- Enter: Owner Name, Owner Email (optional), Owner Phone
+    |       |-- Creates: Owner user doc (role=OWNER) + auto-generated company
+    |       |-- Owner can now login with their phone number via OTP
     |
     |-- Sign Out
 ```
 
 ### What Super Admin CAN do:
-- Create new companies with owners
-- View all companies in the system
-- Set owner's exit PIN (used for owner's own sign-out security)
+- Authorize new owners (name, email, phone)
+- View all authorized owners
+- Remove owner access (delete from Firestore)
+- View global stats (active trips, alerts)
 
 ### What Super Admin CANNOT do:
 - Create drivers (that's the owner's job)
 - View trip details or driver monitoring data
-- Delete companies (future feature)
+- Access the camera feed
 
 ---
 
 ## Owner Flow
 
 ```
-Login (phone OTP)
+Login (phone OTP — only works if authorized by Super Admin)
     |
     v
 Owner Dashboard
@@ -56,6 +73,7 @@ Owner Dashboard
     |       |
     |       |-- [Assign Trip] (only shown when driver has no active trip) ->
     |       |       |-- Search destination via Google Places autocomplete
+    |       |       |       (inline scrollable list — keyboard stays open)
     |       |       |-- Selects address -> resolves lat/lng
     |       |       |-- Creates: Trip doc (status=ACTIVE, destination set)
     |       |       |-- Driver's monitoring service starts writing location to this trip
@@ -99,7 +117,7 @@ Owner Dashboard
 ## Driver Flow
 
 ```
-Login (phone OTP - SMS sent to registered phone)
+Login (phone OTP — only works if added by Owner)
     |
     v
 Step 1: Permissions
@@ -108,70 +126,77 @@ Step 1: Permissions
     |
     v
 Step 2: Bluetooth Setup
-    |-- Scan for nearby Bluetooth speakers/earbuds
-    |-- Connect for alert audio output
-    |-- "Skip" option if not needed
+    |-- Shows paired Bluetooth audio devices
+    |-- Select device for alert audio output
+    |-- "Skip — Use Phone Speaker" option
     |
     v
 Step 3: Monitoring Screen (MAIN SCREEN)
     |
-    |-- Camera starts (front-facing, headless - no preview)
-    |-- Calibration phase (60 seconds)
+    |-- Monitoring starts IMMEDIATELY after permissions granted
+    |-- No need to wait for trip assignment
+    |
+    |-- [LIVE CAMERA PREVIEW]
+    |       |-- Front camera feed shown in rounded box
+    |       |-- Colored border indicates status:
+    |       |       GREEN  = Face detected, monitoring normally
+    |       |       AMBER  = Calibrating (with progress %)
+    |       |       ORANGE = Face not detected — adjust camera
+    |       |       RED    = Impairment detected — ALARM ACTIVE
+    |       |
+    |       |-- Status label below preview:
+    |               "Monitoring Active" / "Calibrating (45%)" /
+    |               "Face Not Detected — Adjust Camera" / "⚠ Impairment Detected"
+    |
+    |-- Calibration phase (first 15 seconds)
     |       |-- Collects baseline eye openness from face detection
-    |       |-- Shows "Calibrating (X%)" with amber dot
+    |       |-- Amber border with "Calibrating (X%)"
     |       |-- No alerts during calibration
     |
-    |-- Active monitoring
-    |       |-- Status dot:
-    |       |       GREEN  = "Monitoring Active"
-    |       |       AMBER  = "Calibrating" or "Stationary"
-    |       |       RED    = "Alert! Impairment Detected"
+    |-- Active monitoring (NO speed gate — always active)
+    |       |-- Eyes closed > 2s -> ALARM (sound + vibration)
+    |       |       ** CONTINUOUS: re-alerts every 5 seconds while eyes remain closed **
+    |       |-- Head drop detected -> ALARM
+    |       |-- Erratic lateral motion (8+ m/s², 3s sustained) -> ALARM
+    |       |-- Two different signals within 10s -> COMBINED (highest severity)
+    |       |-- 3+ alerts in 30 min -> Trip escalated to HIGH_RISK
     |       |
     |       |-- If trip assigned by owner:
-    |       |       Shows "Destination: [name]" as read-only info
+    |       |       Shows "Destination: [name]" at top
     |       |       Location written to Firestore every 30s
+    |       |       Geofence: auto-completes trip on arrival (200m radius)
     |       |
     |       |-- If no trip assigned:
-    |       |       Shows "Monitoring Active"
+    |       |       Shows "VigileX Monitoring" at top
     |       |       Camera + face detection still runs
-    |       |       (monitoring works regardless of trip assignment)
-    |       |
-    |       |-- Speed gate:
-    |       |       Below 20 km/h -> "Stationary" (alerts suppressed)
-    |       |       Above 20 km/h -> full detection active
-    |       |
-    |       |-- Drowsiness/impairment detection:
-    |       |       Eyes closed > 3s -> ALARM + vibration + event logged
-    |       |       Head drop detected -> ALARM + event logged
-    |       |       Erratic motion -> ALARM + event logged
-    |       |       3+ alerts in 30 min -> Trip escalated to HIGH_RISK
     |
-    |-- Sign Out flow:
-            |
-            |-- [No active trip] -> Simple confirmation dialog
-            |       |-- "Sign Out" -> stops camera, stops service, returns to login
-            |
-            |-- [Active trip] -> Warning dialog
-                    |-- "You haven't reached your destination"
-                    |-- "Ask your owner to delete the trip, or enter your exit PIN"
-                    |-- [Enter PIN] -> 6-digit PIN dialog
-                    |       |-- Correct PIN -> stops everything, signs out
-                    |       |-- Wrong PIN -> "Invalid PIN. Contact your owner."
-                    |-- [Cancel] -> back to monitoring
+    |-- Screen-off behavior:
+    |       |-- WakeLock keeps CPU running
+    |       |-- Foreground service keeps camera active
+    |       |-- FLAG_KEEP_SCREEN_ON prevents auto-off
+    |       |-- Monitoring continues even if user presses power button
+    |
+    |-- Sign Out flow (PIN ALWAYS REQUIRED):
+            |-- Tap "Sign Out" or press Back
+            |-- "Monitoring is running. Enter your 6-digit exit PIN."
+            |-- [Enter PIN] -> 6-digit PIN dialog
+            |       |-- Correct PIN -> stops camera + service, signs out
+            |       |-- Wrong PIN -> "Invalid PIN. Contact your owner."
+            |-- [Cancel] -> back to monitoring
 ```
 
 ### What Driver CAN do:
 - Login with registered phone number
 - Connect Bluetooth audio device for alerts
 - View assigned destination (read-only)
-- Sign out freely when no trip is assigned
-- Force sign out with exit PIN during active trip
+- See live camera preview with status overlay
+- Sign out with exit PIN
 
 ### What Driver CANNOT do:
 - Assign themselves trips
 - Change destination
 - Disable monitoring while signed in
-- Sign out during active trip without the exit PIN
+- Sign out without the exit PIN
 - Access owner dashboard or any management features
 
 ---
@@ -179,22 +204,29 @@ Step 3: Monitoring Screen (MAIN SCREEN)
 ## Security Model
 
 ```
-+------------------+     creates      +------------------+     creates      +------------------+
-|   SUPER ADMIN    | --------------> |      OWNER       | --------------> |      DRIVER      |
-|                  |   (phone + PIN) |                  |   (phone + PIN) |                  |
-| - View companies |                 | - Manage drivers |                 | - Monitoring only|
-| - Create owners  |                 | - Assign trips   |                 | - PIN to exit    |
-+------------------+                 | - View live data |                 +------------------+
-                                     | - Delete drivers |
-                                     | - Delete trips   |
-                                     +------------------+
++------------------+   authorizes   +------------------+     adds        +------------------+
+|   SUPER ADMIN    | ------------> |      OWNER       | ------------> |      DRIVER      |
+|                  |  (name+phone) |                  |  (name+phone  |                  |
+| - Auth owners    |               | - Manage drivers |   + exit PIN) | - Monitoring only|
+| - Revoke access  |               | - Assign trips   |               | - PIN to exit    |
++------------------+               | - View live data |               +------------------+
+                                   | - Delete drivers |
+                                   | - Delete trips   |
+                                   +------------------+
 ```
 
+### Authorization Gate:
+- **Before OTP is sent**, the app checks Firestore for a user doc matching the phone number
+- Only Super Admin phone (from BuildConfig) bypasses this check
+- Unauthorized phone numbers see: "This phone number is not authorized. Contact your administrator."
+- No SMS is sent, no Firebase Auth session is created
+
 ### PIN System:
-- **Exit PIN** is set by the creator (Super Admin sets owner PIN, Owner sets driver PIN)
+- **Exit PIN** is set by the Owner when adding a driver
 - PIN is stored in Firestore `users/{uid}/exitPin`
-- PIN is required to sign out during an active trip
+- PIN is **always required** to sign out (whether or not a trip is active)
 - PIN is NOT the OTP used for login (OTP is auto-generated by Firebase)
+- PIN lookup falls back to phone-based search if UID lookup fails (handles pending_ migration)
 
 ### Developer Quick Controls:
 - **Force stop**: `adb shell am force-stop com.vigilex` (kills everything instantly)
@@ -207,7 +239,7 @@ Step 3: Monitoring Screen (MAIN SCREEN)
 
 | Service | When called | Estimated monthly cost (5 trucks, 4 trips/day) |
 |---------|-----------|-----------------------------------------------|
-| Firebase Phone Auth | Driver/Owner login | Free tier (10K/month) |
+| Firebase Phone Auth | Driver/Owner login (authorized only) | Free tier (10K verifications/month) |
 | Cloud Firestore | Real-time listeners, event writes | Free tier (50K reads, 20K writes/day) |
 | Google Places API | Owner assigns trip (autocomplete + fetch) | ~$0 (within $200/month free credit) |
 | Google Maps SDK | Owner views driver location | Free (Maps SDK for Android is free) |

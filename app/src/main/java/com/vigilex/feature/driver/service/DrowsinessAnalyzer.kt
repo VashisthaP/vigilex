@@ -36,8 +36,7 @@ import kotlin.math.abs
  *   Records rolling eye openness average and adjusts EYE_CLOSURE threshold
  *   to avg * 0.5 so drivers with naturally smaller eyes aren't penalised.
  *
- * Speed gate:
- *   Caller must call setCurrentSpeed(). Detection is suppressed below 20 km/h.
+ * Speed gate: DISABLED — monitoring runs at all speeds including stationary.
  */
 class DrowsinessAnalyzer(
     private val sensorManager: SensorManager,
@@ -96,12 +95,15 @@ class DrowsinessAnalyzer(
 
     override fun onSensorChanged(event: SensorEvent) {
         if (event.sensor.type != Sensor.TYPE_LINEAR_ACCELERATION) return
-        if (currentSpeedKmh < SPEED_GATE_KMH) return  // parked — ignore jerks
+        if (!calibrated) return  // don't process accelerometer until face calibration is done
 
-        // X-axis = lateral (left/right) — primary drunk-driving swerve signal
+        // X-axis = lateral (left/right) — drunk-driving swerve signal
+        // Y-axis = forward/backward — hard braking
         val lateralAccel = abs(event.values[0])
         val now = System.currentTimeMillis()
 
+        // Only fire on VERY high sustained lateral force — normal turns (parking, roundabouts)
+        // produce brief 2-5 m/s² spikes. Drunk swerving is 8+ m/s² sustained for 3+ seconds.
         if (lateralAccel > LATERAL_ACCEL_THRESHOLD_MS2) {
             if (lateralSpikeStartMs < 0) lateralSpikeStartMs = now
             val duration = now - lateralSpikeStartMs
@@ -147,8 +149,6 @@ class DrowsinessAnalyzer(
         val now = System.currentTimeMillis()
         if (calibrationStartMs < 0) calibrationStartMs = now  // start timer on first real frame
         val sinceStart = now - calibrationStartMs
-        val belowSpeedGate = currentSpeedKmh < SPEED_GATE_KMH
-
         // ── Calibration window (first 60 s) ──────────────────────────────
         if (!calibrated && sinceStart < CALIBRATION_WINDOW_MS) {
             eyeOpennessSamples += (leftEye + rightEye) / 2f
@@ -157,16 +157,11 @@ class DrowsinessAnalyzer(
         }
         if (!calibrated) {
             val avg = if (eyeOpennessSamples.isNotEmpty()) eyeOpennessSamples.average().toFloat() else DEFAULT_EYE_THRESHOLD
-            eyeThreshold = (avg * 0.5f).coerceIn(0.15f, 0.35f)  // floor/ceiling safety
+            // Threshold = 60% of average — eyes significantly more closed than normal
+            // Floor 0.2 (very narrow eyes) / ceiling 0.45 (wide open eyes)
+            eyeThreshold = (avg * 0.6f).coerceIn(0.20f, 0.45f)
             calibrated = true
             onCalibrationComplete(eyeThreshold)
-        }
-
-        if (belowSpeedGate) {
-            eyeClosedStartMs = -1L
-            headDropStartMs = -1L
-            _statusFlow.tryEmit(MonitoringStatus.Paused)
-            return
         }
 
         // ── Signal 1: Eye closure ─────────────────────────────────────────
@@ -233,17 +228,16 @@ class DrowsinessAnalyzer(
     }
 
     companion object {
-        private const val DEFAULT_EYE_THRESHOLD = 0.25f
-        private const val EYE_CLOSED_DURATION_MS = 2_000L        // 2 seconds
-        private const val HEAD_DROP_DURATION_MS = 1_500L          // 1.5 seconds
-        private const val HEAD_EULER_Z_DEG = 20f
-        private const val HEAD_EULER_Y_DEG = 25f
-        private const val LATERAL_ACCEL_THRESHOLD_MS2 = 4f        // m/s² — sustained swerve
-        private const val LATERAL_SPIKE_DURATION_MS = 2_000L      // 2 seconds sustained
-        private const val SPEED_GATE_KMH = 0f   // TODO: set back to 20f for production
-        private const val CALIBRATION_WINDOW_MS = 60_000L         // 60 seconds
-        private const val EVENT_DEBOUNCE_MS = 30_000L              // 30 seconds between events
-        private const val COMBINED_WINDOW_MS = 10_000L             // 10s window for COMBINED
+        private const val DEFAULT_EYE_THRESHOLD = 0.35f           // more sensitive default
+        private const val EYE_CLOSED_DURATION_MS = 2_000L         // 2 seconds eyes shut
+        private const val HEAD_DROP_DURATION_MS = 1_500L          // 1.5 seconds head tilted
+        private const val HEAD_EULER_Z_DEG = 25f                  // relaxed from 20° to reduce false positives on turns
+        private const val HEAD_EULER_Y_DEG = 30f                  // relaxed from 25° to reduce false positives when looking sideways
+        private const val LATERAL_ACCEL_THRESHOLD_MS2 = 8f        // raised from 4 — normal turns hit 3-5, drunk swerving 8+
+        private const val LATERAL_SPIKE_DURATION_MS = 3_000L      // raised from 2s to 3s — must be sustained, not brief
+        private const val CALIBRATION_WINDOW_MS = 15_000L         // 15 seconds
+        private const val EVENT_DEBOUNCE_MS = 5_000L              // 5 seconds — re-alerts if eyes still closed
+        private const val COMBINED_WINDOW_MS = 10_000L            // 10s window for COMBINED
     }
 }
 

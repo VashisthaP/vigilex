@@ -11,9 +11,11 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.view.PreviewView
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,17 +34,20 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.vigilex.R
+import com.vigilex.feature.driver.service.MonitoringForegroundService
 import com.vigilex.feature.driver.service.MonitoringStatus
 import com.vigilex.ui.theme.Amber
 import com.vigilex.ui.theme.NavyDark
@@ -90,11 +95,9 @@ private fun PermissionsStep(onPermissionsGranted: () -> Unit) {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+ runtime BT permissions
             add(Manifest.permission.BLUETOOTH_CONNECT)
             add(Manifest.permission.BLUETOOTH_SCAN)
         }
-        // Pre-Android 12 BLUETOOTH is a normal permission — no runtime request needed
     }
 
     fun allGranted() = requiredPermissions.all {
@@ -112,7 +115,6 @@ private fun PermissionsStep(onPermissionsGranted: () -> Unit) {
         permissionsGranted = denied.isEmpty()
     }
 
-    // Auto-advance if already granted (re-install / re-launch)
     LaunchedEffect(Unit) {
         if (allGranted()) onPermissionsGranted()
         else launcher.launch(requiredPermissions.toTypedArray())
@@ -345,7 +347,7 @@ private fun BluetoothDeviceRow(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 3 — Active Monitoring UI
+// Step 3 — Active Monitoring UI with live camera preview
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -353,15 +355,15 @@ private fun MonitoringScreen(
     viewModel: DriverViewModel,
     onSignOut: () -> Unit
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val view    = LocalView.current
+    val uiState          by viewModel.uiState.collectAsState()
+    val monitoringStatus by MonitoringForegroundService.monitoringStatusFlow.collectAsState()
+    val view             = LocalView.current
     var showSignOutConfirm by remember { mutableStateOf(false) }
     var showPinDialog      by remember { mutableStateOf(false) }
     var pinInput           by remember { mutableStateOf("") }
     var pinError           by remember { mutableStateOf<String?>(null) }
-    val hasActiveTrip      = uiState.trip != null && uiState.trip?.status == com.vigilex.core.model.TripStatus.ACTIVE
 
-    // Keep screen on — brightness unchanged (use device setting)
+    // Keep screen on at low brightness so camera continues even when user "turns off" screen
     DisposableEffect(Unit) {
         val window = (view.context as? androidx.activity.ComponentActivity)?.window
         window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -370,10 +372,27 @@ private fun MonitoringScreen(
         }
     }
 
-    // Hardware back → ask for sign-out confirmation instead of OTP
+    // Hardware back → ask for sign-out confirmation
     BackHandler(enabled = true) { showSignOutConfirm = true }
 
-    val showAlert = uiState.monitoringStatus is MonitoringStatus.Alert
+    val showAlert = monitoringStatus is MonitoringStatus.Alert
+
+    // Determine camera border color based on monitoring status
+    val borderColor = when (monitoringStatus) {
+        is MonitoringStatus.Active         -> Color(0xFF4CAF50)  // Green — all good
+        is MonitoringStatus.Calibrating    -> Amber               // Amber — calibrating
+        is MonitoringStatus.Paused         -> Color(0xFFFF9800)  // Orange — paused
+        is MonitoringStatus.FaceNotDetected -> Color(0xFFFF9800) // Orange — no face
+        is MonitoringStatus.Alert          -> Color.Red           // Red — impairment
+    }
+
+    val statusLabel = when (val s = monitoringStatus) {
+        is MonitoringStatus.Active         -> "Monitoring Active"
+        is MonitoringStatus.Calibrating    -> "Calibrating (${(s.progress * 100).toInt()}%)"
+        is MonitoringStatus.Paused         -> "Starting..."
+        is MonitoringStatus.FaceNotDetected -> "Face Not Detected — Adjust Camera"
+        is MonitoringStatus.Alert          -> "⚠ Impairment Detected"
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(NavyDark)) {
 
@@ -383,43 +402,57 @@ private fun MonitoringScreen(
         }
 
         Column(
-            modifier            = Modifier.fillMaxSize().padding(24.dp),
+            modifier            = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Active trip destination (if assigned) — informational only
+            // ── Top section: destination or title ──────────────────────
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Spacer(Modifier.height(48.dp))
+                Spacer(Modifier.height(32.dp))
                 if (uiState.trip?.destination?.name?.isNotBlank() == true) {
                     Text(
                         "Destination",
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         style = MaterialTheme.typography.labelMedium
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text      = uiState.trip!!.destination.name,
                         color     = Amber,
-                        fontSize  = 28.sp,
-                        style     = MaterialTheme.typography.headlineMedium,
-                        textAlign = TextAlign.Center
-                    )
-                } else {
-                    // No trip assigned yet — monitoring runs regardless
-                    Text(
-                        "Monitoring Active",
-                        color = Amber,
                         fontSize  = 22.sp,
                         style     = MaterialTheme.typography.headlineSmall,
                         textAlign = TextAlign.Center
                     )
+                } else {
+                    Text(
+                        "VigileX Monitoring",
+                        color    = Amber,
+                        fontSize = 22.sp,
+                        style    = MaterialTheme.typography.headlineSmall,
+                    )
                 }
             }
 
-            // Status dot
-            MonitoringStatusDot(status = uiState.monitoringStatus)
+            // ── Center: Live camera preview with colored border ───────
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CameraPreviewBox(
+                    borderColor = borderColor,
+                    modifier    = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(3f / 4f)
+                        .padding(horizontal = 16.dp)
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text      = statusLabel,
+                    color     = borderColor,
+                    style     = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                )
+            }
 
-            // Speed + sign-out
+            // ── Bottom: speed + sign-out ──────────────────────────────
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 val speedKmh = ((uiState.trip?.lastLocation?.speed ?: 0f) * 3.6f).toInt()
                 if (speedKmh > 0) {
@@ -429,7 +462,7 @@ private fun MonitoringScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
                 TextButton(
                     onClick  = { showSignOutConfirm = true },
                     modifier = Modifier.fillMaxWidth(0.6f)
@@ -440,73 +473,50 @@ private fun MonitoringScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(16.dp))
             }
         }
 
-        // Sign-out confirmation dialog
+        // ── Sign-out confirmation — ALWAYS requires PIN ──────────────
         if (showSignOutConfirm) {
-            if (hasActiveTrip) {
-                // Active trip — warn driver and require PIN or owner action
-                AlertDialog(
-                    onDismissRequest = { showSignOutConfirm = false },
-                    containerColor   = Color(0xFF1A2A3A),
-                    title   = { Text("Trip In Progress", color = Color.Red) },
-                    text    = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                "You haven't reached your destination yet. Monitoring cannot be stopped during an active trip.",
-                                color = MaterialTheme.colorScheme.onSurface.copy(0.75f),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "Ask your owner to delete the trip, or enter your 6-digit exit PIN to force sign out.",
-                                color = MaterialTheme.colorScheme.onSurface.copy(0.5f),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = { showSignOutConfirm = false; showPinDialog = true; pinInput = ""; pinError = null },
-                            colors  = ButtonDefaults.buttonColors(containerColor = Amber)
-                        ) { Text("Enter PIN", color = NavyDark) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showSignOutConfirm = false }) {
-                            Text("Cancel", color = Amber)
-                        }
-                    }
-                )
-            } else {
-                // No active trip — simple confirmation
-                AlertDialog(
-                    onDismissRequest = { showSignOutConfirm = false },
-                    containerColor   = Color(0xFF1A2A3A),
-                    title   = { Text("Sign Out?", color = Amber) },
-                    text    = {
+            AlertDialog(
+                onDismissRequest = { showSignOutConfirm = false },
+                containerColor   = Color(0xFF1A2A3A),
+                title   = { Text("Monitoring Active", color = Amber) },
+                text    = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "Are you sure you want to sign out? Monitoring will stop.",
+                            "Monitoring is running. To sign out, enter your 6-digit exit PIN.",
                             color = MaterialTheme.colorScheme.onSurface.copy(0.75f),
                             style = MaterialTheme.typography.bodyMedium
                         )
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = { showSignOutConfirm = false; onSignOut() },
-                            colors  = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.8f))
-                        ) { Text("Sign Out", color = Color.White) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showSignOutConfirm = false }) {
-                            Text("Cancel", color = Amber)
-                        }
+                        Text(
+                            "Contact your owner if you don't know your PIN.",
+                            color = MaterialTheme.colorScheme.onSurface.copy(0.5f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
-                )
-            }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showSignOutConfirm = false
+                            showPinDialog = true
+                            pinInput = ""
+                            pinError = null
+                        },
+                        colors  = ButtonDefaults.buttonColors(containerColor = Amber)
+                    ) { Text("Enter PIN", color = NavyDark) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSignOutConfirm = false }) {
+                        Text("Cancel", color = Amber)
+                    }
+                }
+            )
         }
 
-        // PIN entry dialog (for active trip sign-out)
+        // ── PIN entry dialog ─────────────────────────────────────────
         if (showPinDialog) {
             AlertDialog(
                 onDismissRequest = { showPinDialog = false },
@@ -585,33 +595,55 @@ private fun MonitoringScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared composables
+// Camera Preview composable — shows live front camera with colored border
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun MonitoringStatusDot(status: MonitoringStatus) {
-    val (dotColor, label) = when (status) {
-        is MonitoringStatus.Active         -> Color(0xFF4CAF50) to "Monitoring Active"
-        is MonitoringStatus.Calibrating    -> Amber              to "Calibrating (${(status.progress * 100).toInt()}%)"
-        is MonitoringStatus.Paused         -> Color(0xFFFF9800) to "Monitoring Paused (Stationary)"
-        is MonitoringStatus.FaceNotDetected -> Color(0xFFFF9800) to "Face Not Detected"
-        is MonitoringStatus.Alert          -> Color.Red          to "⚠ Impairment Detected"
-    }
+private fun CameraPreviewBox(
+    borderColor: Color,
+    modifier: Modifier = Modifier
+) {
+    // Collect the Preview use case from the foreground service
+    val preview by MonitoringForegroundService.previewFlow.collectAsState()
 
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 1.25f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(800, easing = EaseInOutSine),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "dot_scale"
+    // Animate border color transitions
+    val animatedBorderColor by animateColorAsState(
+        targetValue = borderColor,
+        animationSpec = tween(500),
+        label = "camera_border"
     )
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(64.dp).scale(scale).background(dotColor, CircleShape))
-        Spacer(Modifier.height(16.dp))
-        Text(text = label, color = dotColor, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .border(4.dp, animatedBorderColor, RoundedCornerShape(16.dp))
+            .background(NavyMid),
+        contentAlignment = Alignment.Center
+    ) {
+        if (preview != null) {
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
+                },
+                update = { previewView ->
+                    preview?.setSurfaceProvider(previewView.surfaceProvider)
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            // Waiting for camera to initialize
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Amber, strokeWidth = 3.dp)
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Starting camera...",
+                    color = Color.White.copy(0.5f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
     }
 }
-

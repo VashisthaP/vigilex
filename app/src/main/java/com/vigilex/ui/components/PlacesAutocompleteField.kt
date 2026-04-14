@@ -1,7 +1,12 @@
 package com.vigilex.ui.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -9,14 +14,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.AutocompletePrediction
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
+import com.vigilex.ui.theme.NavyMid
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 data class PlaceResult(
     val name:    String,
@@ -26,8 +32,8 @@ data class PlaceResult(
 
 /**
  * A text field that queries Google Places Autocomplete as the user types
- * and lets them pick a result. Calls [onPlaceSelected] with the resolved
- * place name, address, and lat/lng once a suggestion is tapped.
+ * and lets them pick a result. Suggestions appear in a scrollable list
+ * below the field without dismissing the keyboard.
  *
  * Requires [Places.initialize] to have been called (done in VigileXApplication).
  */
@@ -39,13 +45,11 @@ fun PlacesAutocompleteField(
 ) {
     val context      = LocalContext.current
     val placesClient = remember { Places.createClient(context) }
-    val scope        = rememberCoroutineScope()
 
     var query           by remember { mutableStateOf("") }
     var predictions     by remember { mutableStateOf<List<AutocompletePrediction>>(emptyList()) }
-    var showDropdown    by remember { mutableStateOf(false) }
     var isSearching     by remember { mutableStateOf(false) }
-    var selectedDisplay by remember { mutableStateOf("") }   // locked display after selection
+    var selectedDisplay by remember { mutableStateOf("") }
 
     // Debounced search — fires 400 ms after the user stops typing
     LaunchedEffect(query) {
@@ -53,27 +57,24 @@ fun PlacesAutocompleteField(
         selectedDisplay = ""
 
         if (query.length < 2) {
-            predictions  = emptyList()
-            showDropdown = false
+            predictions = emptyList()
             return@LaunchedEffect
         }
         delay(400L)
         isSearching = true
         val request = FindAutocompletePredictionsRequest.builder()
             .setQuery(query)
-            .setCountries("IN")          // restrict to India; remove for global
+            .setCountries("IN")
             .build()
 
         placesClient.findAutocompletePredictions(request)
             .addOnSuccessListener { response ->
-                predictions  = response.autocompletePredictions
-                showDropdown = predictions.isNotEmpty()
-                isSearching  = false
+                predictions = response.autocompletePredictions
+                isSearching = false
             }
             .addOnFailureListener {
-                predictions  = emptyList()
-                showDropdown = false
-                isSearching  = false
+                predictions = emptyList()
+                isSearching = false
             }
     }
 
@@ -86,9 +87,8 @@ fun PlacesAutocompleteField(
             trailingIcon  = {
                 if (isSearching) {
                     CircularProgressIndicator(
-                        modifier = Modifier
-                            .then(Modifier.fillMaxWidth(0.08f)),
-                        strokeWidth = androidx.compose.ui.unit.Dp(2f)
+                        modifier    = Modifier.fillMaxWidth(0.08f),
+                        strokeWidth = 2.dp
                     )
                 } else {
                     Icon(Icons.Default.Search, contentDescription = null)
@@ -97,46 +97,51 @@ fun PlacesAutocompleteField(
             modifier = Modifier.fillMaxWidth()
         )
 
-        DropdownMenu(
-            expanded         = showDropdown,
-            onDismissRequest = { showDropdown = false },
-            modifier         = Modifier.fillMaxWidth(0.9f)
-        ) {
-            predictions.forEach { prediction ->
-                val primary   = prediction.getPrimaryText(null).toString()
-                val secondary = prediction.getSecondaryText(null).toString()
+        // Scrollable suggestion list — stays inline, doesn't steal focus or dismiss keyboard
+        if (predictions.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .padding(top = 4.dp)
+            ) {
+                items(predictions) { prediction ->
+                    val primary   = prediction.getPrimaryText(null).toString()
+                    val secondary = prediction.getSecondaryText(null).toString()
 
-                DropdownMenuItem(
-                    text = {
-                        Column {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedDisplay = primary
+                                query           = primary
+                                predictions     = emptyList()
+
+                                val fields  = listOf(Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS)
+                                val req = FetchPlaceRequest.newInstance(prediction.placeId, fields)
+                                placesClient.fetchPlace(req)
+                                    .addOnSuccessListener { response ->
+                                        val place  = response.place
+                                        val latLng = place.latLng ?: return@addOnSuccessListener
+                                        val name   = place.name ?: primary
+                                        selectedDisplay = name
+                                        query = name
+                                        onPlaceSelected(PlaceResult(name, place.address ?: secondary, latLng))
+                                    }
+                                    .addOnFailureListener {
+                                        selectedDisplay = primary
+                                        onPlaceSelected(PlaceResult(primary, secondary, LatLng(0.0, 0.0)))
+                                    }
+                            },
+                        color = NavyMid
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                             Text(primary,   color = Color.White,            style = MaterialTheme.typography.bodyMedium)
                             Text(secondary, color = Color.White.copy(0.5f), style = MaterialTheme.typography.bodySmall)
                         }
-                    },
-                    onClick = {
-                        showDropdown    = false
-                        selectedDisplay = primary  // block new searches BEFORE changing query
-                        query           = primary  // show primary text in field while fetching
-
-                        // Fetch full place details for lat/lng
-                        val fields  = listOf(Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS)
-                        val request = FetchPlaceRequest.newInstance(prediction.placeId, fields)
-                        placesClient.fetchPlace(request)
-                            .addOnSuccessListener { response ->
-                                val place   = response.place
-                                val latLng  = place.latLng ?: return@addOnSuccessListener
-                                val name    = place.name   ?: primary
-                                selectedDisplay = name
-                                query = name
-                                onPlaceSelected(PlaceResult(name, place.address ?: secondary, latLng))
-                            }
-                            .addOnFailureListener {
-                                // Fallback: use primary text, lat/lng = 0 (user sees destination name at least)
-                                selectedDisplay = primary
-                                onPlaceSelected(PlaceResult(primary, secondary, LatLng(0.0, 0.0)))
-                            }
                     }
-                )
+                    HorizontalDivider(color = Color.White.copy(0.1f))
+                }
             }
         }
     }

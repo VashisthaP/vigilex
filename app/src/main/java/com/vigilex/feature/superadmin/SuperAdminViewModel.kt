@@ -18,7 +18,7 @@ import java.util.UUID
 import javax.inject.Inject
 
 data class SuperAdminUiState(
-    val companies: List<Company> = emptyList(),
+    val owners: List<User> = emptyList(),
     val activeTripsCount: Int = 0,
     val totalAlerts: Int = 0,
     val isLoading: Boolean = false,
@@ -35,17 +35,17 @@ class SuperAdminViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(SuperAdminUiState())
     val uiState: StateFlow<SuperAdminUiState> = _uiState.asStateFlow()
 
-    private val _allTrips = MutableStateFlow<List<Trip>>(emptyList())
-
     init {
+        // Observe all owners (users with role OWNER)
         viewModelScope.launch {
-            firestore.observeAllCompanies().collect { companies ->
-                _uiState.value = _uiState.value.copy(companies = companies)
+            firestore.observeAllUsers().collect { users ->
+                _uiState.value = _uiState.value.copy(
+                    owners = users.filter { it.role == Role.OWNER }
+                )
             }
         }
         viewModelScope.launch {
             firestore.observeAllTrips().collect { trips ->
-                _allTrips.value = trips
                 _uiState.value = _uiState.value.copy(
                     activeTripsCount = trips.count { it.status == TripStatus.ACTIVE || it.status == TripStatus.HIGH_RISK },
                     totalAlerts = trips.sumOf { it.drowsyEventCount }
@@ -55,35 +55,45 @@ class SuperAdminViewModel @Inject constructor(
     }
 
     /**
-     * Creates a new company and registers the owner in Firestore.
-     * No Firebase Auth account is created — the owner logs in via phone OTP.
-     * [ownerPin] is a 6-digit PIN set by the super admin and shared with the owner.
+     * Registers a new Owner in Firestore so they can log in via phone OTP.
+     * A placeholder company is auto-created for the owner.
+     * No Firebase Auth account is created — the owner logs in via phone OTP later.
      */
-    fun addCompany(
-        companyName: String,
-        ownerName:   String,
-        ownerPhone:  String,
-        ownerPin:    String
+    fun addOwner(
+        ownerName:  String,
+        ownerEmail: String,
+        ownerPhone: String
     ) {
-        if (companyName.isBlank() || ownerName.isBlank() || ownerPhone.isBlank()) {
-            _uiState.value = _uiState.value.copy(error = "All fields are required")
-            return
-        }
-        if (ownerPin.length != 6 || !ownerPin.all { it.isDigit() }) {
-            _uiState.value = _uiState.value.copy(error = "Access PIN must be exactly 6 digits")
+        if (ownerName.isBlank() || ownerPhone.isBlank()) {
+            _uiState.value = _uiState.value.copy(error = "Name and phone are required")
             return
         }
         val normalizedPhone = normalizePhone(ownerPhone)
+        if (normalizedPhone.length < 13) {
+            _uiState.value = _uiState.value.copy(error = "Enter a valid 10-digit phone number")
+            return
+        }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             runCatching {
+                // Check if owner with this phone already exists
+                val existing = firestore.getUserByPhone(normalizedPhone)
+                if (existing != null) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        error = "An owner with this phone number already exists."
+                    )
+                    return@launch
+                }
+
                 val companyId      = UUID.randomUUID().toString()
                 val placeholderUid = "pending_${normalizedPhone.replace("+", "")}"
 
+                // Auto-create a company for this owner (named after them)
                 firestore.createCompany(
                     Company(
                         id          = companyId,
-                        companyName = companyName.trim(),
+                        companyName = "${ownerName.trim()}'s Fleet",
                         ownerUid    = placeholderUid,
                         createdAt   = System.currentTimeMillis()
                     )
@@ -92,20 +102,25 @@ class SuperAdminViewModel @Inject constructor(
                     User(
                         uid       = placeholderUid,
                         name      = ownerName.trim(),
-                        email     = "",
+                        email     = ownerEmail.trim(),
                         phone     = normalizedPhone,
                         role      = Role.OWNER,
-                        companyId = companyId,
-                        exitPin   = ownerPin
+                        companyId = companyId
                     )
                 )
                 _uiState.value = _uiState.value.copy(
                     isLoading      = false,
-                    successMessage = "Company '$companyName' created. Owner can log in via phone OTP."
+                    successMessage = "Owner '${ownerName.trim()}' authorized. They can now log in via OTP."
                 )
             }.onFailure {
                 _uiState.value = _uiState.value.copy(isLoading = false, error = it.message)
             }
+        }
+    }
+
+    fun deleteOwner(uid: String) {
+        viewModelScope.launch {
+            runCatching { firestore.deleteUser(uid) }
         }
     }
 
@@ -122,5 +137,4 @@ class SuperAdminViewModel @Inject constructor(
             else                    -> cleaned
         }
     }
-
 }

@@ -9,15 +9,15 @@
 | Architecture | Clean Architecture + MVVM |
 | DI | Hilt |
 | Navigation | Jetpack Navigation Compose |
-| Auth | Firebase Phone Auth (OTP) |
+| Auth | Firebase Phone Auth (OTP) with phone authorization gate |
 | Database | Cloud Firestore (real-time listeners) |
 | Push | Firebase Cloud Messaging |
-| Camera | CameraX (headless, no preview surface) |
+| Camera | CameraX (front camera with live preview + headless analysis) |
 | ML | ML Kit Face Detection (on-device) |
 | Maps | Google Maps Compose + Google Places SDK |
 | Location | Fused Location Provider |
 | Local DB | Room (offline event queue) |
-| Background | Foreground Service (camera + location types) |
+| Background | Foreground Service (camera + location types) + WakeLock |
 
 ---
 
@@ -36,15 +36,15 @@ app/src/main/java/com/vigilex/
 |-- feature/
 |   |-- auth/                      # Login flow
 |   |   |-- LoginScreen.kt         # Phone + OTP input (BasicTextField for Samsung compat)
-|   |   |-- AuthViewModel.kt       # Firebase phone auth, role resolution, user migration
+|   |   |-- AuthViewModel.kt       # Phone authorization gate, Firebase phone auth, role resolution
 |   |
 |   |-- driver/                    # Driver monitoring
-|   |   |-- DriverHomeScreen.kt    # 3-step setup: Permissions -> Bluetooth -> Monitoring
-|   |   |-- DriverViewModel.kt     # Trip observation, service lifecycle, PIN validation
+|   |   |-- DriverHomeScreen.kt    # 3-step setup: Permissions -> Bluetooth -> Live Camera Preview
+|   |   |-- DriverViewModel.kt     # Service lifecycle, PIN validation, monitoring state
 |   |   |-- service/
-|   |       |-- MonitoringForegroundService.kt  # Camera + location pipeline
-|   |       |-- DrowsinessAnalyzer.kt           # ML Kit face analysis + alerting logic
-|   |       |-- AlertOrchestrator.kt            # Sound/vibration alerts
+|   |       |-- MonitoringForegroundService.kt  # Camera + location pipeline + WakeLock
+|   |       |-- DrowsinessAnalyzer.kt           # ML Kit face analysis + continuous alerting
+|   |       |-- AlertOrchestrator.kt            # Sound/vibration alerts (escalating)
 |   |       |-- GeofenceReceiver.kt             # Destination arrival detection
 |   |       |-- BootReceiver.kt                 # Restart service after reboot
 |   |
@@ -56,9 +56,10 @@ app/src/main/java/com/vigilex/
 |   |   |-- settings/              # Owner settings + sign out
 |   |
 |   |-- superadmin/                # Super admin panel
-|       |-- SuperAdminDashboardScreen.kt  # View all companies
-|       |-- AddCompanyScreen.kt           # Create owner with phone + PIN
-|       |-- SuperAdminViewModel.kt        # Company/owner CRUD
+|       |-- SuperAdminDashboardScreen.kt  # View authorized owners, stats
+|       |-- AddCompanyScreen.kt           # Authorize new owner (name, email, phone)
+|       |-- CompanyDetailScreen.kt        # Owner detail view
+|       |-- SuperAdminViewModel.kt        # Owner authorization CRUD
 |
 |-- navigation/
 |   |-- VigileXNavGraph.kt         # Central nav graph, role-based routing
@@ -79,24 +80,27 @@ app/src/main/java/com/vigilex/
 ### Driver Monitoring Pipeline
 
 ```
-CameraX (front camera, headless)
+CameraX (front camera, live preview + ImageAnalysis)
     |
     v
 DrowsinessAnalyzer (ImageAnalysis.Analyzer)
     |-- ML Kit FaceDetector -> eye openness, head euler angles
     |-- Accelerometer sensor -> lateral motion detection
     |
-    |-- [First 60s] Calibration phase: collect baseline eye openness
-    |-- [After calibration] Active detection:
-    |       |-- Eye closure > 3s -> IMPAIRMENT alert
-    |       |-- Head drop (euler Z) -> IMPAIRMENT alert
-    |       |-- Erratic lateral motion -> IMPAIRMENT alert
-    |       |-- Speed gate: alerts only when speed > 20 km/h
+    |-- [First 15s] Calibration phase: collect baseline eye openness
+    |-- [After calibration] Active detection (no speed gate — always on):
+    |       |-- Eye closure > 2s -> IMPAIRMENT alert (re-triggers every 5s)
+    |       |-- Head drop (euler Z > 25° or Y > 30°) -> IMPAIRMENT alert
+    |       |-- Erratic lateral motion (> 8 m/s², 3s sustained) -> IMPAIRMENT alert
+    |       |-- Two different signals within 10s -> COMBINED (highest severity)
     |
     v
 AlertOrchestrator
-    |-- Plays alarm sound via MediaPlayer
-    |-- Triggers device vibration
+    |-- Forces audio volume to MAX
+    |-- Plays 3 escalating alarm bursts via MediaPlayer
+    |-- Routes audio to Bluetooth SCO if connected, else phone speaker
+    |-- Triggers urgent vibration pattern
+    |-- ** CONTINUOUS ** — re-alerts every 5 seconds while condition persists
     |
     v
 MonitoringForegroundService
@@ -104,12 +108,21 @@ MonitoringForegroundService
     |-- Increments trip counter (drowsyEventCount)
     |-- Escalation: 3+ events in 30 min -> HIGH_RISK status
     |-- Updates trip lastLocation every 30s via FusedLocationProvider
+    |-- Holds PARTIAL_WAKE_LOCK for screen-off operation
+    |-- Exposes Preview use case to UI via companion StateFlow
 ```
 
 ### Authentication Flow
 
 ```
 Phone number input
+    |
+    v
+Authorization Gate (NEW)
+    |-- Check if phone is Super Admin -> always allowed
+    |-- Check Firestore for user doc with matching phone
+    |-- If not found -> "This phone number is not authorized"
+    |-- If found -> proceed to send OTP
     |
     v
 Firebase Phone Auth (sends SMS OTP)
@@ -124,9 +137,9 @@ Resolve role:
     3. If found: copy exitPin and all fields to new UID doc
     4. Route to role-specific home screen
     |
-    |-- DRIVER      -> DriverHomeScreen (permissions -> bluetooth -> monitoring)
+    |-- DRIVER      -> DriverHomeScreen (permissions -> bluetooth -> live camera)
     |-- OWNER       -> OwnerDashboardScreen (stats, drivers, trips)
-    |-- SUPER_ADMIN -> SuperAdminDashboardScreen (companies, create owners)
+    |-- SUPER_ADMIN -> SuperAdminDashboardScreen (authorized owners list)
 ```
 
 ### Firestore Collections
@@ -156,12 +169,20 @@ otps/{tripId}
 
 ## Key Design Decisions
 
-1. **Headless camera** - No preview surface needed; CameraX runs inside a foreground service with `FOREGROUND_SERVICE_CAMERA` type. Screen stays on via `FLAG_KEEP_SCREEN_ON` without dimming brightness.
+1. **Live camera preview with colored border** — Front camera feed displayed in a rounded box on the driver's screen. Border color reflects monitoring status: green (active), amber (calibrating), orange (face not detected), red (impairment alert). Uses CameraX Preview use case bound to the foreground service lifecycle, with surface provided by the UI's PreviewView.
 
-2. **Speed gate** - Drowsiness alerts suppressed below 20 km/h to avoid false positives when parked or in traffic. Calibration still runs regardless of speed.
+2. **Continuous alerting** — Unlike one-shot alert systems, VigileX re-triggers the alarm every 5 seconds as long as the drowsiness condition persists (eyes closed, head dropped). This ensures the driver cannot sleep through a single alarm.
 
-3. **Offline resilience** - If Firestore write fails, events are queued in Room DB (`PendingEventEntity`) and synced later via WorkManager.
+3. **No speed gate** — Monitoring runs at all speeds including stationary. This was changed from an earlier 20 km/h threshold because drivers can fall asleep even while stopped (at traffic lights, waiting areas). The accelerometer-based erratic motion detection uses a high threshold (8 m/s², 3s sustained) to avoid false alarms from normal turns and parking maneuvers.
 
-4. **Placeholder UID pattern** - Owners create drivers before they ever log in. A `pending_<phone>` doc is created in Firestore. On first OTP login, the auth flow migrates all fields (including `exitPin`) to the real Firebase Auth UID.
+4. **Phone authorization gate** — OTP is only sent to phone numbers pre-registered in Firestore by a Super Admin (for owners) or Owner (for drivers). Unauthorized numbers are blocked before any SMS is sent, preventing SMS spam and unauthorized access.
 
-5. **Adaptive icon with vector drawables** - Launcher icons use proper vector drawables (not just color references) to prevent Samsung PackageInstaller crash during sideloaded APK install.
+5. **WakeLock + foreground service** — A `PARTIAL_WAKE_LOCK` keeps the CPU running when the screen is off. Combined with `FOREGROUND_SERVICE_CAMERA` and `FOREGROUND_SERVICE_LOCATION` types, this ensures CameraX continues processing frames even when the user presses the power button.
+
+6. **Offline resilience** — If Firestore write fails, events are queued in Room DB (`PendingEventEntity`) and synced later via WorkManager.
+
+7. **Placeholder UID pattern** — Owners create drivers before they ever log in. A `pending_<phone>` doc is created in Firestore. On first OTP login, the auth flow migrates all fields (including `exitPin`) to the real Firebase Auth UID.
+
+8. **Adaptive icon with vector drawables** — Launcher icons use proper vector drawables (not just color references) to prevent Samsung PackageInstaller crash during sideloaded APK install.
+
+9. **PIN-locked sign-out** — Driver sign-out always requires a 6-digit exit PIN, regardless of whether a trip is active. This prevents drivers from disabling monitoring without owner knowledge.

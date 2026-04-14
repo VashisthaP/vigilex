@@ -8,8 +8,10 @@ import android.content.pm.PackageManager
 import android.hardware.SensorManager
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
 import androidx.core.app.NotificationCompat
@@ -36,6 +38,9 @@ import com.vigilex.core.model.Severity
 import com.vigilex.core.model.TripStatus
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -44,13 +49,11 @@ import javax.inject.Inject
 /**
  * Foreground service that runs the entire monitoring pipeline.
  *
- * Lifecycle: started by DriverViewModel on trip start, stopped on trip end or OTP exit.
+ * Lifecycle: started by DriverViewModel on login, stopped on sign-out.
  * Survives screen-off via FOREGROUND_SERVICE_CAMERA + FOREGROUND_SERVICE_LOCATION manifest types.
  *
- * Screen-off workaround (OEM camera restrictions on Android 14+):
- * DriverHomeScreen sets WindowManager.LayoutParams.screenBrightness = 0.01f and
- * FLAG_KEEP_SCREEN_ON so the screen is technically "on" at near-zero brightness,
- * allowing CameraX to keep running.
+ * Exposes a [Preview] use case via [previewFlow] so the UI can attach a PreviewView
+ * to show the live camera feed while the service processes frames headlessly.
  */
 @AndroidEntryPoint
 class MonitoringForegroundService : LifecycleService() {
@@ -62,6 +65,7 @@ class MonitoringForegroundService : LifecycleService() {
 
     private lateinit var alertOrchestrator: AlertOrchestrator
     private lateinit var drowsinessAnalyzer: DrowsinessAnalyzer
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private var currentTripId: String = ""
     private var currentCompanyId: String = ""
@@ -109,9 +113,11 @@ class MonitoringForegroundService : LifecycleService() {
         currentTripId = intent?.getStringExtra(EXTRA_TRIP_ID) ?: ""
         currentCompanyId = intent?.getStringExtra(EXTRA_COMPANY_ID) ?: ""
 
+        acquireWakeLock()
         startForegroundWithNotification()
         startLocationUpdates()
         startCameraAnalysis()
+        collectAnalyzerStatus()
 
         return START_STICKY  // restart service if killed by OS
     }
@@ -145,15 +151,41 @@ class MonitoringForegroundService : LifecycleService() {
         fusedLocation.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
     }
 
+    /**
+     * Acquire a PARTIAL_WAKE_LOCK to keep the CPU running when the screen is off.
+     * Combined with FOREGROUND_SERVICE_CAMERA, this ensures CameraX continues
+     * processing frames even when the user presses the power button.
+     */
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "VigileX::MonitoringWakeLock"
+            ).apply {
+                acquire(8 * 60 * 60 * 1000L)  // 8 hours max — covers longest trips
+            }
+        }
+    }
+
+    private fun collectAnalyzerStatus() {
+        lifecycleScope.launch {
+            drowsinessAnalyzer.statusFlow.collect { status ->
+                _monitoringStatus.value = status
+            }
+        }
+    }
+
     private fun startCameraAnalysis() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED) return
 
-        // Use the CameraX suspend API (awaitInstance) instead of the ListenableFuture-based
-        // callback to keep the code clean.
         lifecycleScope.launch(Dispatchers.Main) {
             runCatching {
                 val cameraProvider = ProcessCameraProvider.awaitInstance(this@MonitoringForegroundService)
+
+                // Preview use case — UI can attach a PreviewView surface to see the live feed
+                val preview = Preview.Builder().build()
 
                 val imageAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -164,8 +196,12 @@ class MonitoringForegroundService : LifecycleService() {
                 cameraProvider.bindToLifecycle(
                     this@MonitoringForegroundService,
                     CameraSelector.DEFAULT_FRONT_CAMERA,
-                    imageAnalysis  // No Preview — headless, no UI surface needed
+                    preview,
+                    imageAnalysis
                 )
+
+                // Expose the Preview so UI can connect a PreviewView
+                _preview.value = preview
             }
         }
     }
@@ -180,7 +216,6 @@ class MonitoringForegroundService : LifecycleService() {
         val now = System.currentTimeMillis()
         if (consecutiveAlertCount == 0) firstAlertWindowStartMs = now
         if (now - firstAlertWindowStartMs > ESCALATION_WINDOW_MS) {
-            // Window expired — reset
             consecutiveAlertCount = 1
             firstAlertWindowStartMs = now
         } else {
@@ -193,6 +228,8 @@ class MonitoringForegroundService : LifecycleService() {
         }
 
         // ── Write event to Firestore (or offline queue) ────────────────────
+        if (currentTripId.isEmpty()) return  // no trip — skip event logging
+
         val event = ImpairmentEvent(
             type = EventType.IMPAIRMENT,
             subtype = subtype,
@@ -208,7 +245,6 @@ class MonitoringForegroundService : LifecycleService() {
         lifecycleScope.launch(Dispatchers.IO) {
             val wrote = runCatching { firestore.writeEvent(event) }.isSuccess
             if (!wrote) {
-                // Queue locally for later sync
                 pendingEventDao.insert(
                     PendingEventEntity(
                         localId = UUID.randomUUID().toString(),
@@ -224,10 +260,8 @@ class MonitoringForegroundService : LifecycleService() {
                     )
                 )
             }
-            // Increment counter on the trip document
             runCatching { firestore.incrementTripCounter(currentTripId, "drowsyEventCount") }
 
-            // Mark trip HIGH_RISK if escalation threshold reached
             if (severity == Severity.HIGH) {
                 runCatching { firestore.updateTripStatus(currentTripId, TripStatus.HIGH_RISK) }
             }
@@ -243,9 +277,15 @@ class MonitoringForegroundService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        _preview.value = null
+        _monitoringStatus.value = MonitoringStatus.Calibrating(0f)
         alertOrchestrator.release()
         drowsinessAnalyzer.release()
         fusedLocation.removeLocationUpdates(locationCallback)
+        wakeLock?.let {
+            if (it.isHeld) it.release()
+        }
+        wakeLock = null
     }
 
     override fun onBind(intent: Intent): IBinder? = null
@@ -255,5 +295,13 @@ class MonitoringForegroundService : LifecycleService() {
         const val EXTRA_COMPANY_ID = "extra_company_id"
         private const val NOTIFICATION_ID = 1001
         private const val ESCALATION_WINDOW_MS = 30 * 60 * 1000L  // 30 minutes
+
+        /** Live Preview use case — UI attaches a PreviewView to see the camera feed. */
+        private val _preview = MutableStateFlow<Preview?>(null)
+        val previewFlow: StateFlow<Preview?> = _preview.asStateFlow()
+
+        /** Monitoring status from the DrowsinessAnalyzer — drives UI border color + label. */
+        private val _monitoringStatus = MutableStateFlow<MonitoringStatus>(MonitoringStatus.Calibrating(0f))
+        val monitoringStatusFlow: StateFlow<MonitoringStatus> = _monitoringStatus.asStateFlow()
     }
 }

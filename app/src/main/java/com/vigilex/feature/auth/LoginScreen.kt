@@ -16,6 +16,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -254,14 +256,19 @@ private fun OtpPanel(
 // Uses BasicTextField (not OutlinedTextField) so Samsung's IME treats it as a
 // proper editable field — fixes "ssi() view is not EditText" keyboard dismissal.
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun OtpBoxRow(value: String, onChange: (String) -> Unit) {
-    val focusRequester = remember { FocusRequester() }
+    val focusRequester      = remember { FocusRequester() }
+    val keyboardController  = LocalSoftwareKeyboardController.current
 
-    // Request focus shortly after composition so the keyboard opens automatically
+    // Request focus + force keyboard open after composition
     LaunchedEffect(Unit) {
-        delay(120L)
-        runCatching { focusRequester.requestFocus() }
+        delay(200L)
+        runCatching {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
     }
 
     BasicTextField(
@@ -282,7 +289,12 @@ private fun OtpBoxRow(value: String, onChange: (String) -> Unit) {
             Row(
                 modifier              = Modifier
                     .fillMaxWidth()
-                    .clickable { runCatching { focusRequester.requestFocus() } },
+                    .clickable {
+                        runCatching {
+                            focusRequester.requestFocus()
+                            keyboardController?.show()
+                        }
+                    },
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 repeat(6) { idx ->

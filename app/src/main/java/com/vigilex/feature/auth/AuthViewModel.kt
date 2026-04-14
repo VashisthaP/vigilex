@@ -76,6 +76,32 @@ class AuthViewModel @Inject constructor(
         lastPhone = phone
         _uiState.value = LoginUiState.Loading
 
+        // ── Authorization gate: only Super Admin phone or pre-registered users get OTP ──
+        val superAdminPhone = normalizePhone(BuildConfig.SUPER_ADMIN_PHONE)
+        if (phone == superAdminPhone) {
+            // Super Admin is always allowed — send OTP directly
+            sendFirebaseOtp(phone, activity)
+            return
+        }
+
+        // Check Firestore if phone is pre-registered (by Super Admin or Owner)
+        viewModelScope.launch {
+            val isAuthorized = runCatching {
+                firestore.getUserByPhone(phone) != null
+            }.getOrDefault(false)
+
+            if (isAuthorized) {
+                sendFirebaseOtp(phone, activity)
+            } else {
+                _uiState.value = LoginUiState.Error(
+                    "This phone number is not authorized. Contact your administrator to get access."
+                )
+            }
+        }
+    }
+
+    /** Actually sends the Firebase Phone Auth OTP — called only after authorization check passes. */
+    private fun sendFirebaseOtp(phone: String, activity: ComponentActivity) {
         val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
             /** Auto-retrieved (Pixel/some devices) — sign in immediately. */
             override fun onVerificationCompleted(credential: PhoneAuthCredential) {

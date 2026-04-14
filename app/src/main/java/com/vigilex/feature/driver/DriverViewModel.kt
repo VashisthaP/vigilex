@@ -30,11 +30,12 @@ import android.app.PendingIntent
 
 data class DriverUiState(
     val trip: Trip? = null,
-    val monitoringStatus: MonitoringStatus = MonitoringStatus.Paused,
+    val monitoringStatus: MonitoringStatus = MonitoringStatus.Calibrating(0f),
     val showOtpDialog: Boolean = false,
     val otpError: String? = null,
     val isTripComplete: Boolean = false,
-    val showImpairmentDisclaimer: Boolean = false
+    val showImpairmentDisclaimer: Boolean = false,
+    val isMonitoringRunning: Boolean = false
 )
 
 @HiltViewModel
@@ -50,11 +51,9 @@ class DriverViewModel @Inject constructor(
     val uiState: StateFlow<DriverUiState> = _uiState.asStateFlow()
 
     // Tracks whether a trip was seen as ACTIVE in this session.
-    // Without this guard, the first Firestore snapshot (null — no trips yet)
-    // would immediately set isTripComplete = true and sign the driver out.
     private var hadActiveTrip = false
 
-    // Cached exit PIN from Firestore — allows driver to unlock without owner OTP.
+    // Cached exit PIN from Firestore
     private var driverExitPin: String = ""
 
     private var permissionsReady = false
@@ -66,21 +65,23 @@ class DriverViewModel @Inject constructor(
         loadDriverExitPin()
     }
 
-    /** Called by DriverHomeScreen once all runtime permissions (camera, location) are granted. */
+    /**
+     * Called by DriverHomeScreen once all runtime permissions (camera, location) are granted.
+     * Immediately starts the monitoring service — no need to wait for a trip.
+     */
     fun onPermissionsGranted() {
         permissionsReady = true
-        // If a trip was already observed before permissions, start the service now
-        val trip = _uiState.value.trip
-        if (trip != null && trip.status == TripStatus.ACTIVE) {
-            startMonitoringService(trip.id, trip.companyId)
-        }
+        // Start monitoring immediately — camera + drowsiness detection begin right away
+        startMonitoringService(
+            tripId = _uiState.value.trip?.id ?: "",
+            companyId = _uiState.value.trip?.companyId ?: ""
+        )
     }
 
     private fun loadDriverExitPin() {
         val uid = auth.currentUser?.uid ?: return
         val phone = auth.currentUser?.phoneNumber ?: ""
         viewModelScope.launch {
-            // Try UID lookup first (migrated doc), then fall back to phone lookup (pending_ doc)
             var pin = runCatching { firestore.getUser(uid)?.exitPin }.getOrNull() ?: ""
             if (pin.isBlank() && phone.isNotBlank()) {
                 pin = runCatching { firestore.getUserByPhone(phone)?.exitPin }.getOrNull() ?: ""
@@ -109,15 +110,14 @@ class DriverViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(trip = trip)
                 if (trip != null && trip.status == TripStatus.ACTIVE) {
                     hadActiveTrip = true
+                    // Update service with trip details if monitoring is already running
                     if (permissionsReady) {
                         startMonitoringService(trip.id, trip.companyId)
                     }
                     registerGeofence(trip)
                 } else if (hadActiveTrip && (trip == null || trip.status == TripStatus.COMPLETE)) {
-                    // Only complete the session if a trip was previously active —
-                    // prevents signing out when no trips exist on first login.
                     _uiState.value = _uiState.value.copy(isTripComplete = true)
-                    stopMonitoringService()
+                    // Don't stop monitoring — it runs regardless of trip
                 }
             }
         }
@@ -134,11 +134,13 @@ class DriverViewModel @Inject constructor(
         } else {
             ctx.startService(intent)
         }
+        _uiState.value = _uiState.value.copy(isMonitoringRunning = true)
     }
 
-    private fun stopMonitoringService() {
+    fun stopMonitoringService() {
         val ctx = getApplication<Application>()
         ctx.stopService(Intent(ctx, MonitoringForegroundService::class.java))
+        _uiState.value = _uiState.value.copy(isMonitoringRunning = false)
     }
 
     private fun registerGeofence(trip: Trip) {
@@ -170,7 +172,6 @@ class DriverViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(showOtpDialog = true, otpError = null)
         val tripId = _uiState.value.trip?.id ?: return
 
-        // Log the close attempt
         viewModelScope.launch {
             val uid = auth.currentUser?.uid ?: return@launch
             runCatching {
@@ -188,12 +189,9 @@ class DriverViewModel @Inject constructor(
                 )
                 firestore.incrementTripCounter(tripId, "closeAttemptCount")
 
-                // Generate and store OTP for owner to see
                 val code = otpGenerator.generate()
                 val expiry = otpGenerator.expiryTimestamp()
                 firestore.writeOtp(tripId, code, expiry)
-                // Note: FCM push to owner is triggered by a Firestore Cloud Function
-                // watching the otps/{tripId} document for changes.
             }
         }
     }
@@ -201,8 +199,6 @@ class DriverViewModel @Inject constructor(
     fun submitOtp(code: String) {
         val tripId = _uiState.value.trip?.id ?: return
         viewModelScope.launch {
-            // Accept either the trip-specific OTP (generated per exit attempt)
-            // or the driver's static exit PIN (set by owner at driver creation).
             val staticPinValid = driverExitPin.isNotBlank() && code == driverExitPin
             val tripOtpValid   = runCatching { firestore.validateOtp(tripId, code) }.getOrDefault(false)
 

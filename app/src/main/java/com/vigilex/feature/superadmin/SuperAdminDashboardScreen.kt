@@ -1,12 +1,12 @@
 package com.vigilex.feature.superadmin
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,7 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.vigilex.core.model.Company
+import com.vigilex.core.model.User
 import com.vigilex.ui.theme.Amber
 import com.vigilex.ui.theme.NavyDark
 import com.vigilex.ui.theme.NavyMid
@@ -30,6 +30,7 @@ fun SuperAdminDashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showSignOutDialog by remember { mutableStateOf(false) }
+    var ownerToDelete by remember { mutableStateOf<User?>(null) }
 
     if (showSignOutDialog) {
         AlertDialog(
@@ -43,6 +44,33 @@ fun SuperAdminDashboardScreen(
             },
             dismissButton    = {
                 TextButton(onClick = { showSignOutDialog = false }) {
+                    Text("Cancel", color = Amber)
+                }
+            },
+            containerColor = Color(0xFF1A2A3A)
+        )
+    }
+
+    // Delete owner confirmation dialog
+    if (ownerToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { ownerToDelete = null },
+            title            = { Text("Remove Owner?", color = Color.Red) },
+            text             = {
+                Text(
+                    "Remove ${ownerToDelete!!.name} (${ownerToDelete!!.phone})? " +
+                    "They will no longer be able to log in.",
+                    color = Color.White.copy(0.8f)
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteOwner(ownerToDelete!!.uid)
+                    ownerToDelete = null
+                }) { Text("Remove", color = Color.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { ownerToDelete = null }) {
                     Text("Cancel", color = Amber)
                 }
             },
@@ -64,8 +92,14 @@ fun SuperAdminDashboardScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddCompany, containerColor = Amber) {
-                Icon(Icons.Default.Add, null, tint = NavyDark)
+            ExtendedFloatingActionButton(
+                onClick        = onAddCompany,
+                containerColor = Amber,
+                contentColor   = NavyDark
+            ) {
+                Icon(Icons.Default.Add, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add Owner")
             }
         }
     ) { padding ->
@@ -75,23 +109,38 @@ fun SuperAdminDashboardScreen(
         ) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    GlobalStatCard("Companies",    uiState.companies.size.toString(),  Modifier.weight(1f))
+                    GlobalStatCard("Owners",       uiState.owners.size.toString(),     Modifier.weight(1f))
                     GlobalStatCard("Active Trips", uiState.activeTripsCount.toString(), Modifier.weight(1f))
                     GlobalStatCard("Total Alerts", uiState.totalAlerts.toString(),      Modifier.weight(1f))
                 }
             }
 
             item {
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    "Companies",
+                    "Authorized Owners",
                     color      = Amber,
                     style      = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            items(uiState.companies) { company ->
-                CompanyCard(company = company, onClick = { onCompanyClick(company.id) })
+            if (uiState.owners.isEmpty()) {
+                item {
+                    Text(
+                        "No owners yet. Tap 'Add Owner' to authorize someone.",
+                        color = Color.White.copy(0.4f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            items(uiState.owners) { owner ->
+                OwnerCard(
+                    owner    = owner,
+                    onClick  = { onCompanyClick(owner.companyId) },
+                    onDelete = { ownerToDelete = owner }
+                )
             }
         }
     }
@@ -115,9 +164,9 @@ private fun GlobalStatCard(label: String, value: String, modifier: Modifier = Mo
 }
 
 @Composable
-private fun CompanyCard(company: Company, onClick: () -> Unit) {
+private fun OwnerCard(owner: User, onClick: () -> Unit, onDelete: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth(),
         colors   = CardDefaults.cardColors(containerColor = NavyMid),
         shape    = RoundedCornerShape(10.dp)
     ) {
@@ -126,11 +175,16 @@ private fun CompanyCard(company: Company, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment   = Alignment.CenterVertically
         ) {
-            Column {
-                Text(company.companyName,        color = Color.White,            style = MaterialTheme.typography.bodyMedium)
-                Text("${company.driverCount} drivers", color = Color.White.copy(0.4f), style = MaterialTheme.typography.bodySmall)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(owner.name.ifBlank { "Unnamed Owner" }, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                if (owner.email.isNotBlank()) {
+                    Text(owner.email, color = Color.White.copy(0.5f), style = MaterialTheme.typography.bodySmall)
+                }
+                Text(owner.phone, color = Color.White.copy(0.4f), style = MaterialTheme.typography.bodySmall)
             }
-            Text("View →", color = Amber, style = MaterialTheme.typography.labelSmall)
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = "Remove", tint = Color.Red.copy(0.7f))
+            }
         }
     }
 }
