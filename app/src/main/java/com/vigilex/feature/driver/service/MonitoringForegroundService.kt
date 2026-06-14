@@ -97,6 +97,7 @@ class MonitoringForegroundService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         alertOrchestrator = AlertOrchestrator(this)
 
         val sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -172,8 +173,20 @@ class MonitoringForegroundService : LifecycleService() {
         lifecycleScope.launch {
             drowsinessAnalyzer.statusFlow.collect { status ->
                 _monitoringStatus.value = status
+                // Auto-stop alarm when driver recovers (eyes open 2s)
+                if (status is MonitoringStatus.Recovered || status is MonitoringStatus.Active) {
+                    if (alertOrchestrator.isAlertActive) {
+                        alertOrchestrator.stopAlert()
+                    }
+                }
             }
         }
+    }
+
+    /** Called from UI "Stop Alarm" button. */
+    fun manualStopAlarm() {
+        alertOrchestrator.stopAlert()
+        drowsinessAnalyzer.clearAlertState()
     }
 
     private fun startCameraAnalysis() {
@@ -277,6 +290,7 @@ class MonitoringForegroundService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        instance = null
         _preview.value = null
         _monitoringStatus.value = MonitoringStatus.Calibrating(0f)
         alertOrchestrator.release()
@@ -299,6 +313,10 @@ class MonitoringForegroundService : LifecycleService() {
         /** Live Preview use case — UI attaches a PreviewView to see the camera feed. */
         private val _preview = MutableStateFlow<Preview?>(null)
         val previewFlow: StateFlow<Preview?> = _preview.asStateFlow()
+
+        /** Reference to the running service instance for UI to call manualStopAlarm(). */
+        @Volatile var instance: MonitoringForegroundService? = null
+            private set
 
         /** Monitoring status from the DrowsinessAnalyzer — drives UI border color + label. */
         private val _monitoringStatus = MutableStateFlow<MonitoringStatus>(MonitoringStatus.Calibrating(0f))

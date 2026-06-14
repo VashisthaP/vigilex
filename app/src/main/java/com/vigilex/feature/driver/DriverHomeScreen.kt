@@ -23,10 +23,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.ui.text.input.KeyboardType
@@ -377,21 +380,26 @@ private fun MonitoringScreen(
 
     val showAlert = monitoringStatus is MonitoringStatus.Alert
 
+    // Collapsible camera preview state
+    var isPreviewExpanded by remember { mutableStateOf(true) }
+
     // Determine camera border color based on monitoring status
     val borderColor = when (monitoringStatus) {
-        is MonitoringStatus.Active         -> Color(0xFF4CAF50)  // Green — all good
-        is MonitoringStatus.Calibrating    -> Amber               // Amber — calibrating
-        is MonitoringStatus.Paused         -> Color(0xFFFF9800)  // Orange — paused
-        is MonitoringStatus.FaceNotDetected -> Color(0xFFFF9800) // Orange — no face
-        is MonitoringStatus.Alert          -> Color.Red           // Red — impairment
+        is MonitoringStatus.Active          -> Color(0xFF4CAF50)  // Green — all good
+        is MonitoringStatus.Recovered       -> Color(0xFF4CAF50)  // Green — recovered from alert
+        is MonitoringStatus.Calibrating     -> Amber               // Amber — calibrating
+        is MonitoringStatus.Paused          -> Color(0xFFFF9800)  // Orange — paused
+        is MonitoringStatus.FaceNotDetected -> Color(0xFFFF9800)  // Orange — no face
+        is MonitoringStatus.Alert           -> Color.Red           // Red — impairment
     }
 
     val statusLabel = when (val s = monitoringStatus) {
-        is MonitoringStatus.Active         -> "Monitoring Active"
-        is MonitoringStatus.Calibrating    -> "Calibrating (${(s.progress * 100).toInt()}%)"
-        is MonitoringStatus.Paused         -> "Starting..."
+        is MonitoringStatus.Active          -> "Monitoring Active"
+        is MonitoringStatus.Recovered       -> "Driver Awake — Alarm Stopped"
+        is MonitoringStatus.Calibrating     -> "Calibrating (${(s.progress * 100).toInt()}%)"
+        is MonitoringStatus.Paused          -> "Starting..."
         is MonitoringStatus.FaceNotDetected -> "Face Not Detected — Adjust Camera"
-        is MonitoringStatus.Alert          -> "⚠ Impairment Detected"
+        is MonitoringStatus.Alert           -> "⚠ Impairment Detected"
     }
 
     Box(modifier = Modifier.fillMaxSize().background(NavyDark)) {
@@ -435,21 +443,92 @@ private fun MonitoringScreen(
 
             // ── Center: Live camera preview with colored border ───────
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CameraPreviewBox(
-                    borderColor = borderColor,
-                    modifier    = Modifier
+                // Expand / Collapse toggle row
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (isPreviewExpanded) "Collapse" else "Expand",
+                        color = Color.White.copy(0.5f),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(
+                        onClick = { isPreviewExpanded = !isPreviewExpanded },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPreviewExpanded) Icons.Default.Remove else Icons.Default.Add,
+                            contentDescription = if (isPreviewExpanded) "Collapse preview" else "Expand preview",
+                            tint = Amber,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+
+                // Camera preview — full or thumbnail based on toggle
+                val previewModifier = if (isPreviewExpanded) {
+                    Modifier
                         .fillMaxWidth()
                         .aspectRatio(3f / 4f)
                         .padding(horizontal = 16.dp)
+                } else {
+                    Modifier
+                        .size(width = 120.dp, height = 90.dp)
+                        .padding(horizontal = 4.dp)
+                }
+
+                CameraPreviewBox(
+                    borderColor = borderColor,
+                    modifier    = previewModifier
                 )
+
                 Spacer(Modifier.height(12.dp))
+
                 Text(
-                    text      = statusLabel,
-                    color     = borderColor,
-                    style     = MaterialTheme.typography.bodyMedium,
+                    text       = statusLabel,
+                    color      = borderColor,
+                    style      = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center
+                    textAlign  = TextAlign.Center
                 )
+
+                // Stop Alarm button — visible only during active alert
+                AnimatedVisibility(
+                    visible = showAlert,
+                    enter   = fadeIn() + expandVertically(),
+                    exit    = fadeOut() + shrinkVertically()
+                ) {
+                    Button(
+                        onClick = {
+                            MonitoringForegroundService.instance?.manualStopAlarm()
+                        },
+                        modifier = Modifier
+                            .padding(top = 16.dp)
+                            .fillMaxWidth(0.65f)
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                        shape  = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector        = Icons.Default.VolumeOff,
+                            contentDescription = null,
+                            tint               = Color.White,
+                            modifier           = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Stop Alarm",
+                            color     = Color.White,
+                            style     = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
 
             // ── Bottom: speed + sign-out ──────────────────────────────

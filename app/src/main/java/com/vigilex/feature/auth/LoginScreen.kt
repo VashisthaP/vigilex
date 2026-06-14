@@ -44,26 +44,47 @@ fun LoginScreen(
         }
     }
 
+    // Track OTP step independently — Loading/Error during verification
+    // must NOT flip back to the phone entry screen
+    var isOtpStep by remember { mutableStateOf(false) }
+    var otpPhone  by remember { mutableStateOf("") }
+
+    // Move TO OTP step when OtpSent arrives
+    LaunchedEffect(uiState) {
+        when (uiState) {
+            is LoginUiState.OtpSent -> {
+                otpPhone  = (uiState as LoginUiState.OtpSent).formattedPhone
+                isOtpStep = true
+            }
+            is LoginUiState.NoSession -> {
+                // Only go back to phone entry on explicit sign-out / session clear
+                isOtpStep = false
+            }
+            // Loading, Error, Success — stay on whichever step we're already on
+            else -> {}
+        }
+    }
+
     Box(
         modifier         = Modifier.fillMaxSize().background(NavyDark),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(
-            targetState = uiState is LoginUiState.OtpSent,
+            targetState = isOtpStep,
             transitionSpec = {
                 slideInHorizontally { it } + fadeIn() togetherWith
                 slideOutHorizontally { -it } + fadeOut()
             },
             label = "login_step"
-        ) { isOtpStep ->
-            if (isOtpStep) {
+        ) { showOtp ->
+            if (showOtp) {
                 OtpPanel(
-                    phone     = (uiState as? LoginUiState.OtpSent)?.formattedPhone ?: "",
+                    phone     = otpPhone,
                     isLoading = uiState is LoginUiState.Loading,
                     error     = (uiState as? LoginUiState.Error)?.message,
                     onVerify  = { viewModel.verifyOtp(it) },
                     onResend  = { viewModel.resendOtp(activity) },
-                    onBack    = { viewModel.signOut() }
+                    onBack    = { viewModel.signOut() }  // signOut() sets NoSession → isOtpStep = false
                 )
             } else {
                 PhonePanel(

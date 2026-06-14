@@ -58,11 +58,16 @@ class DrowsinessAnalyzer(
     // ── Detection state ─────────────────────────────────────────────────────
     private var eyeClosedStartMs: Long = -1L
     private var headDropStartMs: Long = -1L
-    private var lastEventMs: Long = 0L        // debounce: min 30s between logged events
+    private var lastEventMs: Long = 0L        // debounce between logged events
 
     // For COMBINED detection — tracks the most recent distinct signal type and when it fired
     private var prevSignalType: ImpairmentSubtype? = null
     private var prevSignalMs:   Long = 0L
+
+    // ── Recovery state: eyes open for 2s = clear alert ─────────────────────
+    private var eyesOpenSinceMs: Long = -1L
+    @Volatile var isInAlertState: Boolean = false
+        private set
 
     // ── Accelerometer state ─────────────────────────────────────────────────
     private var lateralSpikeStartMs: Long = -1L
@@ -167,6 +172,7 @@ class DrowsinessAnalyzer(
         // ── Signal 1: Eye closure ─────────────────────────────────────────
         val eyesClosed = leftEye < eyeThreshold && rightEye < eyeThreshold
         if (eyesClosed) {
+            eyesOpenSinceMs = -1L  // reset recovery timer
             if (eyeClosedStartMs < 0) eyeClosedStartMs = now
             val closedMs = now - eyeClosedStartMs
             if (closedMs >= EYE_CLOSED_DURATION_MS && canFireEvent()) {
@@ -176,6 +182,8 @@ class DrowsinessAnalyzer(
             }
         } else {
             eyeClosedStartMs = -1L
+            // Eyes are open — track how long they've been open for recovery
+            if (eyesOpenSinceMs < 0) eyesOpenSinceMs = now
         }
 
         // ── Signal 2: Head drop ───────────────────────────────────────────
@@ -192,7 +200,17 @@ class DrowsinessAnalyzer(
             headDropStartMs = -1L
         }
 
-        _statusFlow.tryEmit(MonitoringStatus.Active)
+        // ── Recovery: eyes open for 2s → clear alert state ───────────────
+        if (isInAlertState && eyesOpenSinceMs > 0 && (now - eyesOpenSinceMs) >= RECOVERY_OPEN_MS) {
+            isInAlertState = false
+            eyesOpenSinceMs = -1L
+            _statusFlow.tryEmit(MonitoringStatus.Recovered)
+            return
+        }
+
+        if (!isInAlertState) {
+            _statusFlow.tryEmit(MonitoringStatus.Active)
+        }
     }
 
     private fun fireImpairment(subtype: ImpairmentSubtype) {
@@ -214,6 +232,8 @@ class DrowsinessAnalyzer(
         prevSignalMs   = now
         lastEventMs    = now
 
+        isInAlertState = true
+        eyesOpenSinceMs = -1L  // reset recovery timer
         _statusFlow.tryEmit(MonitoringStatus.Alert(resolvedSubtype))
         onImpairmentDetected(resolvedSubtype)
     }
@@ -221,6 +241,13 @@ class DrowsinessAnalyzer(
     /** Returns true if enough time has passed since the last event (30s debounce). */
     private fun canFireEvent(): Boolean =
         System.currentTimeMillis() - lastEventMs > EVENT_DEBOUNCE_MS
+
+    /** Called by UI "Stop Alarm" button or auto-recovery. */
+    fun clearAlertState() {
+        isInAlertState = false
+        eyesOpenSinceMs = -1L
+        _statusFlow.tryEmit(MonitoringStatus.Active)
+    }
 
     fun release() {
         sensorManager.unregisterListener(this)
@@ -238,14 +265,16 @@ class DrowsinessAnalyzer(
         private const val CALIBRATION_WINDOW_MS = 15_000L         // 15 seconds
         private const val EVENT_DEBOUNCE_MS = 5_000L              // 5 seconds — re-alerts if eyes still closed
         private const val COMBINED_WINDOW_MS = 10_000L            // 10s window for COMBINED
+        private const val RECOVERY_OPEN_MS = 2_000L              // eyes open 2s = alarm auto-stop
     }
 }
 
-/** Emitted to the UI to drive the status dot state. */
+/** Emitted to the UI to drive the camera border color + status label. */
 sealed class MonitoringStatus {
     object Active : MonitoringStatus()
     object Paused : MonitoringStatus()
     object FaceNotDetected : MonitoringStatus()
+    object Recovered : MonitoringStatus()   // eyes opened for 2s after alert — alarm stopped
     data class Calibrating(val progress: Float) : MonitoringStatus()
     data class Alert(val subtype: ImpairmentSubtype) : MonitoringStatus()
 }

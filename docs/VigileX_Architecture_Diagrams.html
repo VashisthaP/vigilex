@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VigileX — Technical Architecture & Functional Flow</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: #0a0f1a;
+    color: #e0e6ed;
+    line-height: 1.6;
+  }
+
+  /* ── Cover ── */
+  .cover {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, #0d1b2a 0%, #1b2d45 50%, #0d1b2a 100%);
+    text-align: center;
+    padding: 40px;
+  }
+  .cover h1 {
+    font-size: 64px;
+    font-weight: 800;
+    color: #f4a261;
+    letter-spacing: -2px;
+    margin-bottom: 8px;
+  }
+  .cover .tagline {
+    font-size: 22px;
+    color: rgba(255,255,255,0.6);
+    font-weight: 300;
+    margin-bottom: 40px;
+  }
+  .cover .meta {
+    font-size: 14px;
+    color: rgba(255,255,255,0.35);
+  }
+  .cover-stats {
+    display: flex;
+    gap: 40px;
+    margin-top: 48px;
+  }
+  .cover-stat {
+    text-align: center;
+  }
+  .cover-stat .num {
+    font-size: 42px;
+    font-weight: 700;
+    color: #f4a261;
+  }
+  .cover-stat .label {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ── Section ── */
+  .section {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 80px 40px;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 700;
+    color: #f4a261;
+    margin-bottom: 8px;
+    letter-spacing: -1px;
+  }
+  .section-subtitle {
+    font-size: 16px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 40px;
+  }
+  .section-divider {
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(244,162,97,0.3), transparent);
+    margin: 0 auto;
+  }
+
+  /* ── Diagram container ── */
+  .diagram-container {
+    background: #111827;
+    border: 1px solid rgba(244,162,97,0.15);
+    border-radius: 16px;
+    padding: 32px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .diagram-container .mermaid {
+    display: flex;
+    justify-content: center;
+  }
+  .diagram-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f4a261;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 16px;
+  }
+
+  /* ── Info cards ── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+    margin: 24px 0;
+  }
+  .card {
+    background: #111827;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .card h3 {
+    color: #f4a261;
+    font-size: 18px;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .card p, .card li {
+    color: rgba(255,255,255,0.65);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .card ul {
+    padding-left: 18px;
+  }
+  .card li { margin-bottom: 4px; }
+
+  /* ── Signal table ── */
+  .signal-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 24px 0;
+  }
+  .signal-table th {
+    background: rgba(244,162,97,0.12);
+    color: #f4a261;
+    padding: 14px 20px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(244,162,97,0.2);
+  }
+  .signal-table td {
+    padding: 14px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    font-size: 14px;
+    color: rgba(255,255,255,0.7);
+  }
+  .signal-table tr:hover td {
+    background: rgba(244,162,97,0.04);
+  }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge-red { background: rgba(239,68,68,0.2); color: #ef4444; }
+  .badge-amber { background: rgba(244,162,97,0.2); color: #f4a261; }
+  .badge-green { background: rgba(34,197,94,0.2); color: #22c55e; }
+  .badge-blue { background: rgba(59,130,246,0.2); color: #3b82f6; }
+
+  /* ── Tech stack ── */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .tech-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #111827;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 14px 18px;
+  }
+  .tech-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .tech-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: #fff;
+  }
+  .tech-desc {
+    font-size: 12px;
+    color: rgba(255,255,255,0.45);
+  }
+
+  /* ── Page break for print ── */
+  @media print {
+    .section { page-break-before: always; }
+    .cover { page-break-after: always; }
+    body { background: #fff; color: #1a1a1a; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- COVER PAGE                                                             -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="cover">
+  <h1>VigileX</h1>
+  <div class="tagline">AI-Powered Driver Safety & Alertness Monitor</div>
+  <div class="meta">Technical Architecture & Functional Flow Document &bull; v2.0 &bull; May 2026</div>
+  <div class="cover-stats">
+    <div class="cover-stat">
+      <div class="num">3</div>
+      <div class="label">Detection Signals</div>
+    </div>
+    <div class="cover-stat">
+      <div class="num">15s</div>
+      <div class="label">Calibration Time</div>
+    </div>
+    <div class="cover-stat">
+      <div class="num">$0</div>
+      <div class="label">Monthly Cost*</div>
+    </div>
+    <div class="cover-stat">
+      <div class="num">100%</div>
+      <div class="label">On-Device AI</div>
+    </div>
+  </div>
+  <div class="meta" style="margin-top:24px;">* Within Google Cloud free tiers for small fleet operations</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 1. SYSTEM OVERVIEW                                                     -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">1. System Overview</div>
+  <div class="section-subtitle">End-to-end architecture — from camera frame to fleet dashboard</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">High-Level System Architecture</div>
+    <pre class="mermaid">
+    graph TB
+      subgraph DEVICE["📱 DRIVER'S ANDROID DEVICE"]
+        direction TB
+        CAM["🎥 Front Camera<br/><i>CameraX ImageAnalysis</i>"]
+        MLKIT["🧠 ML Kit Face Detection<br/><i>On-device, zero-cost</i>"]
+        ANALYZER["⚡ Drowsiness Analyzer<br/><i>3-signal impairment engine</i>"]
+        ACCEL["📐 Accelerometer<br/><i>Lateral G-force sensor</i>"]
+        ALERT["🔊 Alert Orchestrator<br/><i>BT speaker → phone fallback</i>"]
+        GPS["📍 Fused Location<br/><i>30s interval, high accuracy</i>"]
+        ROOM["💾 Room DB<br/><i>Offline event queue</i>"]
+        FGS["🔄 Foreground Service<br/><i>Survives screen-off</i>"]
+
+        CAM --> MLKIT
+        MLKIT -->|"eye openness<br/>head euler angles"| ANALYZER
+        ACCEL -->|"lateral acceleration"| ANALYZER
+        ANALYZER -->|"impairment detected"| ALERT
+        ANALYZER -->|"event data"| FGS
+        GPS -->|"lat, lng, speed"| FGS
+        FGS -->|"offline fallback"| ROOM
+      end
+
+      subgraph CLOUD["☁️ FIREBASE CLOUD"]
+        direction TB
+        AUTH["🔐 Phone Auth<br/><i>OTP verification</i>"]
+        FS["📄 Cloud Firestore<br/><i>Real-time database</i>"]
+        FCM["📨 Cloud Messaging<br/><i>Push notifications</i>"]
+      end
+
+      subgraph DASHBOARDS["📊 FLEET MONITORING"]
+        direction TB
+        OWNER["👔 Owner Dashboard<br/><i>Live map, trip history</i>"]
+        SA["👑 Super Admin<br/><i>Fleet-wide oversight</i>"]
+      end
+
+      FGS ==>|"events, location,<br/>trip updates"| FS
+      ROOM -.->|"WorkManager sync<br/>every 15 min"| FS
+      FS ==>|"real-time snapshots"| OWNER
+      FS ==>|"real-time snapshots"| SA
+      FS -->|"high-risk alert"| FCM
+      FCM -->|"push notification"| OWNER
+      AUTH -.->|"OTP gate"| DEVICE
+
+      style DEVICE fill:#0d1b2a,stroke:#f4a261,stroke-width:2px,color:#fff
+      style CLOUD fill:#1a1a3e,stroke:#3b82f6,stroke-width:2px,color:#fff
+      style DASHBOARDS fill:#1a2e1a,stroke:#22c55e,stroke-width:2px,color:#fff
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 2. MONITORING SIGNALS                                                  -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">2. Impairment Detection Signals</div>
+  <div class="section-subtitle">Three independent signals detect drowsiness and intoxication in real-time</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Detection Pipeline</div>
+    <pre class="mermaid">
+    graph LR
+      subgraph INPUT["INPUT SOURCES"]
+        CAM["🎥 Camera Frames<br/><i>30 fps front camera</i>"]
+        IMU["📐 Accelerometer<br/><i>Device motion sensor</i>"]
+      end
+
+      subgraph PROCESSING["AI PROCESSING"]
+        FACE["ML Kit<br/>Face Detector"]
+        EYE["Eye Openness<br/>Probability<br/><i>L: 0.0–1.0</i><br/><i>R: 0.0–1.0</i>"]
+        HEAD["Head Euler<br/>Angles<br/><i>Y: left/right</i><br/><i>Z: tilt</i>"]
+        LAT["Lateral<br/>Acceleration<br/><i>X-axis m/s²</i>"]
+      end
+
+      subgraph SIGNALS["DETECTION SIGNALS"]
+        S1["🔴 SIGNAL 1<br/><b>EYE CLOSURE</b><br/>Both eyes &lt; threshold<br/>for ≥ 2 seconds"]
+        S2["🟠 SIGNAL 2<br/><b>HEAD DROP</b><br/>Tilt &gt; 25° or Turn &gt; 30°<br/>for ≥ 1.5 seconds"]
+        S3["🟡 SIGNAL 3<br/><b>ERRATIC MOTION</b><br/>Lateral G &gt; 8 m/s²<br/>for ≥ 3 seconds"]
+      end
+
+      subgraph OUTPUT["ALERT OUTPUT"]
+        SINGLE["Single Signal<br/>Alert"]
+        COMBINED["⚠️ COMBINED<br/>2+ signals in 10s<br/><i>Highest severity</i>"]
+        ALARM["🔊 ALARM<br/>Max volume<br/>Loops until stopped"]
+      end
+
+      CAM --> FACE
+      FACE --> EYE
+      FACE --> HEAD
+      IMU --> LAT
+
+      EYE --> S1
+      HEAD --> S2
+      LAT --> S3
+
+      S1 --> SINGLE
+      S2 --> SINGLE
+      S3 --> SINGLE
+      S1 --> COMBINED
+      S2 --> COMBINED
+      S3 --> COMBINED
+      SINGLE --> ALARM
+      COMBINED --> ALARM
+
+      style S1 fill:#7f1d1d,stroke:#ef4444,color:#fff
+      style S2 fill:#78350f,stroke:#f59e0b,color:#fff
+      style S3 fill:#713f12,stroke:#eab308,color:#fff
+      style COMBINED fill:#7f1d1d,stroke:#ef4444,stroke-width:3px,color:#fff
+      style ALARM fill:#991b1b,stroke:#ef4444,stroke-width:2px,color:#fff
+    </pre>
+  </div>
+
+  <table class="signal-table">
+    <thead>
+      <tr>
+        <th>Signal</th>
+        <th>What It Detects</th>
+        <th>Sensor</th>
+        <th>Threshold</th>
+        <th>Duration</th>
+        <th>Use Case</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-red">EYE CLOSURE</span></td>
+        <td>Drowsy microsleep, intoxicated eye droop</td>
+        <td>ML Kit Face Detection</td>
+        <td>Both eyes &lt; calibrated threshold (avg &times; 0.6)</td>
+        <td>&ge; 2 seconds</td>
+        <td>Primary drowsiness indicator</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-amber">HEAD DROP</span></td>
+        <td>Nodding off, head loll from intoxication</td>
+        <td>ML Kit Face Detection</td>
+        <td>Euler Z &gt; 25&deg; or Euler Y &gt; 30&deg;</td>
+        <td>&ge; 1.5 seconds</td>
+        <td>Secondary drowsiness / attention</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-amber">ERRATIC MOTION</span></td>
+        <td>Drunk swerving, sudden lateral drift</td>
+        <td>Device Accelerometer</td>
+        <td>Lateral X-axis &gt; 8 m/s&sup2;</td>
+        <td>&ge; 3 seconds sustained</td>
+        <td>Drunk-driving differentiator</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-red">COMBINED</span></td>
+        <td>Multiple impairment signals simultaneously</td>
+        <td>Fusion of above</td>
+        <td>2+ different signals within 10-second window</td>
+        <td>—</td>
+        <td>Highest confidence alert</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Calibration & Alert Lifecycle</div>
+    <pre class="mermaid">
+    stateDiagram-v2
+      [*] --> Calibrating: Service starts
+      Calibrating --> Active: 15s baseline complete<br/>Eye threshold = avg × 0.6
+
+      Active --> Alert: Impairment signal detected<br/>(eyes closed 2s / head drop / swerve)
+      Active --> FaceNotDetected: No face in frame
+
+      FaceNotDetected --> Active: Face detected again
+
+      Alert --> Recovered: Eyes open for 2+ seconds<br/>(auto-stop alarm)
+      Alert --> Recovered: Driver taps "Stop Alarm"
+      Alert --> Alert: Re-alerts every 5s<br/>while eyes remain closed
+
+      Recovered --> Active: Normal monitoring resumes
+
+      note right of Calibrating
+        First 15 seconds:
+        Records eye openness baseline
+        Adjusts personal threshold
+        No alerts during this phase
+      end note
+
+      note right of Alert
+        Escalation:
+        3+ alerts in 30 min
+        → Trip marked HIGH RISK
+        → Owner notified via FCM
+      end note
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 3. ROLE-BASED APP FLOW                                                 -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">3. Role-Based Application Flow</div>
+  <div class="section-subtitle">Three roles with strictly separated permissions — single APK, role detected post-login</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Authorization Chain</div>
+    <pre class="mermaid">
+    graph LR
+      SA["👑 SUPER ADMIN<br/><i>System owner</i>"]
+      OW["👔 OWNER<br/><i>Fleet manager</i>"]
+      DR["🚗 DRIVER<br/><i>Monitored user</i>"]
+
+      SA -->|"authorizes<br/>(name + phone)"| OW
+      OW -->|"adds<br/>(name + phone + PIN)"| DR
+
+      SA2["🔒 Phone Auth Gate<br/><i>Only pre-registered<br/>numbers get OTP</i>"]
+
+      SA -.->|"phone hardcoded<br/>in BuildConfig"| SA2
+      OW -.->|"phone stored<br/>in Firestore"| SA2
+      DR -.->|"phone stored<br/>in Firestore"| SA2
+
+      style SA fill:#92400e,stroke:#f59e0b,color:#fff
+      style OW fill:#1e3a5f,stroke:#3b82f6,color:#fff
+      style DR fill:#14532d,stroke:#22c55e,color:#fff
+      style SA2 fill:#7f1d1d,stroke:#ef4444,color:#fff
+    </pre>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Driver Flow — Complete Journey</div>
+    <pre class="mermaid">
+    graph TD
+      LOGIN["📱 Login<br/><i>Phone OTP</i>"]
+      PERM["🔑 Permissions<br/><i>Camera, Location,<br/>Notifications, Bluetooth</i>"]
+      BT["🎵 Bluetooth Setup<br/><i>Select vehicle audio<br/>or skip to phone speaker</i>"]
+      MON["🎥 MONITORING ACTIVE<br/><i>Camera preview with<br/>colored status border</i>"]
+      CAL["⏳ Calibrating<br/><i>15s eye baseline</i>"]
+      DET["🔍 Detection Running<br/><i>All 3 signals active</i>"]
+      ALARM["🚨 ALARM!<br/><i>Max volume, loops<br/>until stopped</i>"]
+      REC["✅ Recovered<br/><i>Eyes open 2s or<br/>manual Stop Alarm</i>"]
+      ARRIVE["🏁 Arrived<br/><i>Geofence 200m radius<br/>auto-completes trip</i>"]
+      EXIT["🔐 Sign Out<br/><i>6-digit PIN required<br/>(set by owner)</i>"]
+
+      LOGIN --> PERM
+      PERM -->|"all granted"| BT
+      BT --> MON
+      MON --> CAL
+      CAL -->|"15s done"| DET
+      DET -->|"impairment<br/>detected"| ALARM
+      ALARM -->|"eyes open 2s<br/>or tap Stop"| REC
+      ALARM -->|"re-alerts every 5s<br/>while eyes closed"| ALARM
+      REC --> DET
+      DET -->|"destination<br/>reached"| ARRIVE
+      MON -->|"sign out<br/>request"| EXIT
+
+      style ALARM fill:#991b1b,stroke:#ef4444,stroke-width:3px,color:#fff
+      style MON fill:#0d3b0d,stroke:#22c55e,stroke-width:2px,color:#fff
+      style REC fill:#14532d,stroke:#22c55e,color:#fff
+      style CAL fill:#78350f,stroke:#f59e0b,color:#fff
+    </pre>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Owner Flow — Fleet Management</div>
+    <pre class="mermaid">
+    graph TD
+      OLOGIN["📱 Login<br/><i>Phone OTP</i>"]
+      DASH["📊 Dashboard<br/><i>Live map + driver cards</i>"]
+      MAP["🗺️ Map View<br/><i>All driver locations<br/>color-coded markers</i>"]
+      CARDS["📋 Card View<br/><i>Driver grid with<br/>status badges</i>"]
+      DRIVERS["👥 Drivers Management<br/><i>Add / delete drivers</i>"]
+      ADD_DR["➕ Add Driver<br/><i>Name, phone, 6-digit PIN</i>"]
+      ASSIGN["🎯 Assign Trip<br/><i>Google Places autocomplete<br/>destination search</i>"]
+      TRIPS["📜 Trip History<br/><i>Filter: All / Active /<br/>Complete / High Risk</i>"]
+      DETAIL["📍 Driver Detail<br/><i>Live map + route polyline<br/>+ event timeline</i>"]
+      TRIP_D["📝 Trip Detail<br/><i>Summary + event timeline<br/>with severity badges</i>"]
+
+      OLOGIN --> DASH
+      DASH --> MAP
+      DASH --> CARDS
+      DASH --> DRIVERS
+      DASH --> TRIPS
+      DASH --> DETAIL
+      DRIVERS --> ADD_DR
+      DRIVERS --> ASSIGN
+      TRIPS --> TRIP_D
+      CARDS -->|"tap driver"| DETAIL
+
+      style DASH fill:#1e3a5f,stroke:#3b82f6,stroke-width:2px,color:#fff
+      style MAP fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    </pre>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Super Admin Flow</div>
+    <pre class="mermaid">
+    graph TD
+      SLOGIN["📱 Login<br/><i>Phone OTP<br/>(hardcoded number)</i>"]
+      SDASH["👑 Super Admin Dashboard<br/><i>Global stats: Owners,<br/>Active Trips, Total Alerts</i>"]
+      ADD_OW["➕ Add Owner<br/><i>Name, Email, Phone<br/>→ auto-creates company</i>"]
+      DEL_OW["🗑️ Delete Owner<br/><i>Revokes access</i>"]
+      OW_DET["📄 Owner Detail<br/><i>Name, Email, Phone,<br/>Company ID</i>"]
+
+      SLOGIN --> SDASH
+      SDASH --> ADD_OW
+      SDASH --> DEL_OW
+      SDASH --> OW_DET
+
+      style SDASH fill:#92400e,stroke:#f59e0b,stroke-width:2px,color:#fff
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 4. ALERT SYSTEM                                                        -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">4. Alert & Escalation System</div>
+  <div class="section-subtitle">Multi-stage response from immediate driver alert to fleet-wide notification</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Alert Pipeline — From Detection to Escalation</div>
+    <pre class="mermaid">
+    graph TD
+      DET["⚡ Impairment Detected<br/><i>DrowsinessAnalyzer</i>"]
+
+      subgraph IMMEDIATE["⚡ IMMEDIATE (< 1 second)"]
+        AUDIO["🔊 Audio Alert<br/>Max volume alarm<br/>loops continuously"]
+        VISUAL["🔴 Visual Alert<br/>Red camera border<br/>+ red screen overlay"]
+        BTN["🛑 Stop Alarm Button<br/>appears on screen"]
+      end
+
+      subgraph LOGGING["📝 EVENT LOGGING (< 2 seconds)"]
+        FS_EVENT["Firestore Event<br/><i>type, subtype, severity<br/>lat, lng, timestamp</i>"]
+        ROOM_Q["Room Offline Queue<br/><i>fallback if no internet</i>"]
+        COUNTER["Trip Counter++<br/><i>drowsyEventCount</i>"]
+      end
+
+      subgraph ESCALATION["🚨 ESCALATION (3+ events in 30 min)"]
+        HIGH["Trip → HIGH_RISK<br/><i>status updated</i>"]
+        FCM_N["📨 FCM Push<br/><i>Owner notified</i>"]
+        BADGE["🔴 High Risk Badge<br/><i>visible on dashboard</i>"]
+      end
+
+      subgraph RECOVERY["✅ RECOVERY"]
+        AUTO["Auto-Stop<br/><i>Eyes open 2 seconds</i>"]
+        MANUAL["Manual Stop<br/><i>Driver taps button</i>"]
+        GREEN["🟢 Green Border<br/><i>Monitoring resumes</i>"]
+      end
+
+      DET --> IMMEDIATE
+      DET --> LOGGING
+
+      FS_EVENT -.->|"write failed"| ROOM_Q
+      ROOM_Q -.->|"WorkManager<br/>sync 15 min"| FS_EVENT
+
+      COUNTER -->|"count ≥ 3<br/>in 30 min"| ESCALATION
+
+      IMMEDIATE --> RECOVERY
+      AUTO --> GREEN
+      MANUAL --> GREEN
+
+      style IMMEDIATE fill:#7f1d1d,stroke:#ef4444,stroke-width:2px,color:#fff
+      style ESCALATION fill:#78350f,stroke:#f59e0b,stroke-width:2px,color:#fff
+      style RECOVERY fill:#14532d,stroke:#22c55e,stroke-width:2px,color:#fff
+      style LOGGING fill:#1e293b,stroke:#64748b,color:#fff
+    </pre>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Severity Escalation Logic</div>
+    <pre class="mermaid">
+    graph LR
+      E1["1st Alert<br/>in 30 min"]
+      E2["2nd Alert<br/>in 30 min"]
+      E3["3rd+ Alert<br/>in 30 min"]
+
+      E1 -->|"severity"| LOW["🟢 LOW"]
+      E2 -->|"severity"| MED["🟡 MEDIUM"]
+      E3 -->|"severity"| HIGH["🔴 HIGH"]
+
+      HIGH --> TRIP["Trip → HIGH_RISK"]
+      HIGH --> PUSH["Push → Owner"]
+
+      style LOW fill:#14532d,stroke:#22c55e,color:#fff
+      style MED fill:#78350f,stroke:#f59e0b,color:#fff
+      style HIGH fill:#7f1d1d,stroke:#ef4444,color:#fff
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 5. DATA ARCHITECTURE                                                   -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">5. Data Architecture</div>
+  <div class="section-subtitle">Cloud Firestore collections with real-time sync and offline resilience</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Firestore Collections & Relationships</div>
+    <pre class="mermaid">
+    erDiagram
+      SUPERADMIN {
+        string email
+        string phone
+        string uid
+      }
+
+      USERS {
+        string uid PK
+        string name
+        string email
+        string phone
+        string role "superadmin | owner | driver"
+        string companyId FK
+        string exitPin "6-digit driver PIN"
+        string fcmToken
+        long createdAt
+      }
+
+      COMPANIES {
+        string id PK
+        string companyName
+        string ownerUid FK
+        long createdAt
+        int driverCount
+      }
+
+      TRIPS {
+        string id PK
+        string driverId FK
+        string ownerId FK
+        string companyId FK
+        map destination "name, lat, lng"
+        long startTime
+        long endTime
+        string status "active | complete | high_risk"
+        map lastLocation "lat, lng, speed, updatedAt"
+        int drowsyEventCount
+        int closeAttemptCount
+      }
+
+      EVENTS {
+        string id PK
+        string type "impairment | close_attempt | trip_complete"
+        string subtype "eye_closure | head_drop | erratic_motion | combined"
+        string driverId FK
+        string tripId FK
+        string companyId FK
+        long timestamp
+        double lat
+        double lng
+        string severity "low | medium | high"
+      }
+
+      COMPANIES ||--o{ USERS : "has drivers/owner"
+      USERS ||--o{ TRIPS : "drives"
+      TRIPS ||--o{ EVENTS : "generates"
+      USERS ||--o{ COMPANIES : "owns"
+    </pre>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Offline Resilience — Event Sync Pipeline</div>
+    <pre class="mermaid">
+    sequenceDiagram
+      participant A as DrowsinessAnalyzer
+      participant S as Foreground Service
+      participant F as Firestore
+      participant R as Room DB
+      participant W as WorkManager
+
+      A->>S: impairment detected (subtype, severity)
+      S->>F: writeEvent(event)
+
+      alt Online — Write Succeeds
+        F-->>S: ✅ Event stored
+        S->>F: incrementTripCounter()
+      else Offline — Write Fails
+        F-->>S: ❌ Network error
+        S->>R: insert(PendingEventEntity)
+        Note over R: Stored locally with retry count
+      end
+
+      loop Every 15 minutes (when online)
+        W->>R: getPendingEvents()
+        R-->>W: List of unsent events
+        W->>F: writeEvent(each)
+        F-->>W: ✅ Synced
+        W->>R: delete(synced events)
+      end
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 6. SCREEN-OFF PERSISTENCE                                              -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">6. Screen-Off & Background Persistence</div>
+  <div class="section-subtitle">Multi-layer protection ensures monitoring never stops</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Background Survival Architecture</div>
+    <pre class="mermaid">
+    graph TD
+      subgraph LAYER1["LAYER 1: Android Foreground Service"]
+        FGS["MonitoringForegroundService<br/><i>Persistent notification<br/>prevents OS kill</i>"]
+        TYPE["foregroundServiceType=<br/>'camera|location'<br/><i>Android 14+ compliant</i>"]
+      end
+
+      subgraph LAYER2["LAYER 2: Wake Lock"]
+        WAKE["PARTIAL_WAKE_LOCK<br/><i>CPU stays awake<br/>8-hour max duration</i>"]
+      end
+
+      subgraph LAYER3["LAYER 3: Camera Binding"]
+        BIND["CameraX bound to<br/>Service lifecycle<br/><i>NOT Activity lifecycle</i>"]
+      end
+
+      subgraph LAYER4["LAYER 4: Process Death Recovery"]
+        STICKY["START_STICKY<br/><i>Auto-restart if OS kills</i>"]
+        BOOT["BootReceiver<br/><i>Restart after reboot</i>"]
+      end
+
+      subgraph LAYER5["LAYER 5: Screen State"]
+        KEEP["FLAG_KEEP_SCREEN_ON<br/><i>Prevents auto-lock<br/>while app visible</i>"]
+      end
+
+      subgraph RESULT["✅ RESULT"]
+        R1["Camera processes frames"]
+        R2["ML Kit detects faces"]
+        R3["Alarms fire at max volume"]
+        R4["Location updates continue"]
+      end
+
+      LAYER1 --> RESULT
+      LAYER2 --> RESULT
+      LAYER3 --> RESULT
+      LAYER4 --> RESULT
+      LAYER5 --> RESULT
+
+      style RESULT fill:#14532d,stroke:#22c55e,stroke-width:2px,color:#fff
+      style LAYER1 fill:#1e293b,stroke:#3b82f6,color:#fff
+      style LAYER2 fill:#1e293b,stroke:#3b82f6,color:#fff
+      style LAYER3 fill:#1e293b,stroke:#3b82f6,color:#fff
+      style LAYER4 fill:#1e293b,stroke:#3b82f6,color:#fff
+      style LAYER5 fill:#1e293b,stroke:#3b82f6,color:#fff
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 7. SECURITY MODEL                                                      -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">7. Security Model</div>
+  <div class="section-subtitle">Defense-in-depth — from phone-level access to Firestore document rules</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Access Control Layers</div>
+    <pre class="mermaid">
+    graph TD
+      subgraph GATE1["🔒 GATE 1: Phone Authorization"]
+        G1["Phone number checked<br/>against Firestore BEFORE<br/>any OTP SMS is sent"]
+        G1A["Unauthorized → blocked<br/><i>No SMS sent, no cost</i>"]
+        G1B["Super Admin phone →<br/><i>hardcoded in BuildConfig</i>"]
+      end
+
+      subgraph GATE2["🔒 GATE 2: Firebase Phone Auth"]
+        G2["OTP verification via<br/>Firebase Phone Auth"]
+        G2A["reCAPTCHA / Play Integrity<br/><i>bot prevention</i>"]
+      end
+
+      subgraph GATE3["🔒 GATE 3: Role-Based Access"]
+        G3["Firestore Security Rules<br/><i>per-collection, per-role</i>"]
+        G3A["Super Admin → all data"]
+        G3B["Owner → own company only"]
+        G3C["Driver → own data only"]
+      end
+
+      subgraph GATE4["🔒 GATE 4: Exit Prevention"]
+        G4["6-digit Exit PIN<br/><i>set by owner, required<br/>for every sign-out</i>"]
+        G4A["Wrong PIN →<br/><i>monitoring continues</i>"]
+      end
+
+      GATE1 --> GATE2 --> GATE3
+      GATE3 --> GATE4
+
+      style GATE1 fill:#1e293b,stroke:#ef4444,stroke-width:2px,color:#fff
+      style GATE2 fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#fff
+      style GATE3 fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#fff
+      style GATE4 fill:#1e293b,stroke:#8b5cf6,stroke-width:2px,color:#fff
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 8. TECH STACK                                                          -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">8. Technology Stack</div>
+  <div class="section-subtitle">Built entirely on Google/Firebase/Jetpack — zero third-party dependencies</div>
+
+  <div class="tech-grid">
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(168,85,247,0.15);">🟣</div>
+      <div>
+        <div class="tech-name">Kotlin</div>
+        <div class="tech-desc">Language — null safety, coroutines, Flow</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(59,130,246,0.15);">🔵</div>
+      <div>
+        <div class="tech-name">Jetpack Compose</div>
+        <div class="tech-desc">UI — declarative, no XML layouts</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(34,197,94,0.15);">🟢</div>
+      <div>
+        <div class="tech-name">CameraX</div>
+        <div class="tech-desc">Camera — headless frame processing</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(244,162,97,0.15);">🧠</div>
+      <div>
+        <div class="tech-name">ML Kit Face Detection</div>
+        <div class="tech-desc">AI — on-device, free, no internet needed</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(239,68,68,0.15);">🔥</div>
+      <div>
+        <div class="tech-name">Firebase Auth</div>
+        <div class="tech-desc">Phone OTP authentication</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(239,68,68,0.15);">🔥</div>
+      <div>
+        <div class="tech-name">Cloud Firestore</div>
+        <div class="tech-desc">Real-time database + offline sync</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(239,68,68,0.15);">🔥</div>
+      <div>
+        <div class="tech-name">Firebase Cloud Messaging</div>
+        <div class="tech-desc">Push notifications to fleet owners</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(59,130,246,0.15);">📍</div>
+      <div>
+        <div class="tech-name">Google Maps SDK + Places</div>
+        <div class="tech-desc">Live map, destination search</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(59,130,246,0.15);">📡</div>
+      <div>
+        <div class="tech-name">Fused Location Provider</div>
+        <div class="tech-desc">GPS tracking — 30s high-accuracy</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(34,197,94,0.15);">💉</div>
+      <div>
+        <div class="tech-name">Hilt (Dagger)</div>
+        <div class="tech-desc">Dependency injection — compile-time safe</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(168,85,247,0.15);">💾</div>
+      <div>
+        <div class="tech-name">Room Database</div>
+        <div class="tech-desc">Offline event queue — survives process death</div>
+      </div>
+    </div>
+    <div class="tech-item">
+      <div class="tech-icon" style="background:rgba(168,85,247,0.15);">⚙️</div>
+      <div>
+        <div class="tech-name">WorkManager</div>
+        <div class="tech-desc">Background sync — 15 min interval</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card-grid">
+    <div class="card">
+      <h3>Cost Structure</h3>
+      <table class="signal-table" style="margin:0;">
+        <tr><td>ML Kit Face Detection</td><td><b>$0</b> — on-device</td></tr>
+        <tr><td>Firebase Phone Auth</td><td><b>$0</b> — 10K free/month</td></tr>
+        <tr><td>Cloud Firestore</td><td><b>$0</b> — 50K reads/day free</td></tr>
+        <tr><td>Google Maps SDK</td><td><b>$0</b> — free on Android</td></tr>
+        <tr><td>Google Places API</td><td><b>$0</b> — within $200 credit</td></tr>
+        <tr><td style="border:none;color:#f4a261;font-weight:700;">Total (5 trucks, 4 trips/day)</td><td style="border:none;color:#f4a261;font-weight:700;">$0/month</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Device Requirements</h3>
+      <ul>
+        <li>Android 8.0+ (API 26)</li>
+        <li>Front-facing camera (8MP+ recommended)</li>
+        <li>Google Play Services</li>
+        <li>GPS sensor</li>
+        <li>Accelerometer</li>
+        <li>Bluetooth (optional — for vehicle audio)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 9. COMPLETE FUNCTIONAL FLOW                                            -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">9. Complete End-to-End Flow</div>
+  <div class="section-subtitle">From fleet setup to real-time monitoring to trip completion</div>
+
+  <div class="diagram-container">
+    <div class="diagram-label">Full Operational Sequence</div>
+    <pre class="mermaid">
+    sequenceDiagram
+      actor SA as Super Admin
+      actor OW as Fleet Owner
+      actor DR as Driver
+      participant APP as VigileX App
+      participant ML as ML Kit (On-Device)
+      participant FS as Firestore
+      participant FCM as Push Notifications
+
+      Note over SA,FCM: ━━━ SETUP PHASE ━━━
+
+      SA->>APP: Login (hardcoded phone)
+      SA->>FS: Add Owner (name, email, phone)
+      FS-->>OW: Owner can now login
+
+      OW->>APP: Login (phone OTP)
+      OW->>FS: Add Driver (name, phone, PIN)
+      FS-->>DR: Driver can now login
+
+      Note over SA,FCM: ━━━ TRIP ASSIGNMENT ━━━
+
+      OW->>APP: Assign Trip (Google Places search)
+      APP->>FS: Create trip (destination, status=ACTIVE)
+
+      Note over SA,FCM: ━━━ DRIVER MONITORING ━━━
+
+      DR->>APP: Login (phone OTP)
+      APP->>DR: Permissions → Bluetooth → Monitoring
+      APP->>ML: Start camera analysis
+      APP->>FS: Begin location updates (30s)
+
+      Note over ML: 15s calibration — eye baseline
+
+      loop Every Camera Frame (~30 fps)
+        APP->>ML: ImageProxy frame
+        ML-->>APP: Eye openness, head angles
+        APP->>APP: Check 3 signals
+      end
+
+      Note over SA,FCM: ━━━ IMPAIRMENT DETECTED ━━━
+
+      ML-->>APP: Eyes closed 2+ seconds
+      APP->>DR: 🔊 ALARM (max volume, loops)
+      APP->>FS: Write impairment event
+      APP->>FS: Increment drowsyEventCount
+
+      alt Eyes Open 2 seconds
+        APP->>DR: ✅ Alarm auto-stops
+      else Driver Taps Stop
+        DR->>APP: Tap "Stop Alarm"
+        APP->>DR: ✅ Alarm stops
+      end
+
+      alt 3+ Events in 30 Minutes
+        APP->>FS: Trip → HIGH_RISK
+        FS->>FCM: High risk notification
+        FCM->>OW: 🚨 Push alert
+      end
+
+      Note over SA,FCM: ━━━ TRIP COMPLETION ━━━
+
+      alt Geofence Arrival (200m)
+        APP->>FS: Trip → COMPLETE (automatic)
+      else Manual Sign-Out
+        DR->>APP: Enter 6-digit exit PIN
+        APP->>FS: Trip → COMPLETE
+      end
+    </pre>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- 10. UI STATUS INDICATORS                                               -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section">
+  <div class="section-title">10. Driver UI — Camera Status Indicators</div>
+  <div class="section-subtitle">Real-time visual feedback via camera preview border color</div>
+
+  <div class="card-grid">
+    <div class="card" style="border-left: 4px solid #f59e0b;">
+      <h3>🟠 Amber — Calibrating</h3>
+      <p>First 15 seconds after monitoring starts. Collects eye-openness baseline to set personalized threshold. No alerts during this phase. Shows "Calibrating (X%)" with progress.</p>
+    </div>
+    <div class="card" style="border-left: 4px solid #22c55e;">
+      <h3>🟢 Green — Active / Recovered</h3>
+      <p>Face detected, all signals within normal range. Monitoring is fully active. Also shown after recovery from an alert (eyes open 2+ seconds). Label: "Monitoring Active" or "Driver Awake — Alarm Stopped".</p>
+    </div>
+    <div class="card" style="border-left: 4px solid #f97316;">
+      <h3>🟠 Orange — Face Not Detected</h3>
+      <p>ML Kit cannot find a face in the camera frame. Could be caused by sunglasses, poor lighting, or incorrect camera angle. Label: "Face Not Detected — Adjust Camera". No false positives.</p>
+    </div>
+    <div class="card" style="border-left: 4px solid #ef4444;">
+      <h3>🔴 Red — Impairment Alert</h3>
+      <p>One or more impairment signals active. Full-screen red overlay. Alarm at max volume through BT or phone speaker. "Stop Alarm" button appears. Re-alerts every 5 seconds while eyes remain closed.</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:20px;">
+    <h3>Camera Preview Controls</h3>
+    <p>The live camera preview can be <b>collapsed</b> using the (−) button to a small 120×90dp thumbnail, reducing driver distraction. The (+) button expands it back to full size. Monitoring continues regardless of preview size.</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- FOOTER                                                                 -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="section-divider"></div>
+<div class="section" style="text-align:center; padding: 60px 40px;">
+  <div style="font-size:28px; font-weight:700; color:#f4a261; margin-bottom:8px;">VigileX</div>
+  <div style="color:rgba(255,255,255,0.4); font-size:14px;">
+    AI-Powered Driver Safety &bull; 100% On-Device Processing &bull; Zero Monthly Cost<br/>
+    Built with Kotlin &bull; Jetpack Compose &bull; ML Kit &bull; Firebase
+  </div>
+  <div style="color:rgba(255,255,255,0.2); font-size:12px; margin-top:24px;">
+    Technical Architecture Document &bull; Confidential &bull; May 2026
+  </div>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1e3a5f',
+      primaryTextColor: '#e0e6ed',
+      primaryBorderColor: '#3b82f6',
+      lineColor: '#64748b',
+      secondaryColor: '#1e293b',
+      tertiaryColor: '#111827',
+      fontFamily: 'Inter, sans-serif',
+      fontSize: '14px',
+      noteBkgColor: '#1e293b',
+      noteTextColor: '#e0e6ed',
+      noteBorderColor: '#475569',
+      actorBkg: '#1e3a5f',
+      actorBorder: '#3b82f6',
+      actorTextColor: '#e0e6ed',
+      signalColor: '#94a3b8',
+      labelBoxBkgColor: '#1e293b',
+      labelTextColor: '#e0e6ed',
+    },
+    flowchart: {
+      htmlLabels: true,
+      curve: 'basis',
+      padding: 20,
+    },
+    sequence: {
+      actorMargin: 60,
+      messageMargin: 40,
+      boxMargin: 10,
+      noteMargin: 15,
+    }
+  });
+</script>
+
+</body>
+</html>

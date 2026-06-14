@@ -2,107 +2,221 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Helpers ────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // Helper Functions
+    // ═══════════════════════════════════════════════════════════════════════
 
     function isSignedIn() {
       return request.auth != null;
     }
 
+    // Safely get the caller's user doc — returns null-safe data
+    function callerData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function callerRole() {
+      return callerData().role;
+    }
+
     function isSuperAdmin() {
-      return isSignedIn() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+      return isSignedIn() && callerRole() == 'superadmin';
     }
 
-    function isOwner(companyId) {
-      return isSignedIn() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner' &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == companyId;
+    function isOwnerOf(companyId) {
+      return isSignedIn()
+        && callerRole() == 'owner'
+        && callerData().companyId == companyId;
     }
 
-    function isDriver(uid) {
-      return isSignedIn() && request.auth.uid == uid;
+    function isAnyOwner() {
+      return isSignedIn() && callerRole() == 'owner';
     }
 
-    function isTripParticipant(tripData) {
-      return isSignedIn() && (
-        request.auth.uid == tripData.driverId ||
-        request.auth.uid == tripData.ownerId
-      );
-    }
-
-    // ── superadmin ─────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // 1. superadmin collection — bootstrap config
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // On first Super Admin login the app calls:
+    //   createUser(sa)       → writes users/{uid}
+    //   seedSuperAdmin(...)  → writes superadmin/config
+    //
+    // At that point users/{uid} already exists with role='superadmin',
+    // so isSuperAdmin() succeeds for the seedSuperAdmin write.
+    //
+    // Read is also limited to Super Admin.
     match /superadmin/{docId} {
       allow read, write: if isSuperAdmin();
     }
 
-    // ── companies ──────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // 2. companies collection
+    // ═══════════════════════════════════════════════════════════════════════
     match /companies/{companyId} {
-      allow read: if isSuperAdmin() || isOwner(companyId);
+      // Super Admin sees all; owner sees their own company
+      allow read: if isSignedIn() && (
+        isSuperAdmin() || isOwnerOf(companyId)
+      );
+      // Only Super Admin creates/updates/deletes companies
       allow write: if isSuperAdmin();
     }
 
-    // ── users ──────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // 3. users collection
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Query patterns used by the app:
+    //   getUserByPhone(phone)         → whereEqualTo("phone", phone)
+    //   observeDriversForOwner(...)   → whereEqualTo("companyId",...) + whereEqualTo("role","driver")
+    //   observeAllUsers()             → full collection (Super Admin only)
+    //
     match /users/{uid} {
-      // Users can read their own doc; owners can read their company's users; super admin reads all
-      allow read: if isSignedIn() && (
-        request.auth.uid == uid ||
-        isSuperAdmin() ||
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner' &&
-         get(/databases/$(database)/documents/users/$(uid)).data.companyId ==
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId)
-      );
-      // Users can update their own FCM token; owners create drivers; super admin writes all
-      allow update: if isSignedIn() && request.auth.uid == uid &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken']);
-      allow create: if isSuperAdmin() ||
-                    (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner');
-      allow delete: if isSuperAdmin();
-    }
 
-    // ── trips ──────────────────────────────────────────────────────────────
-    match /trips/{tripId} {
+      // ── READ ──
+      // a) Any authenticated user can read their own doc
+      // b) Super Admin can read any user doc (observeAllUsers)
+      // c) Owner can read users in their company (observeDriversForOwner)
+      // d) Any authenticated user can read a doc that matches their phone
+      //    (needed for getUserByPhone during login/migration)
       allow read: if isSignedIn() && (
-        isSuperAdmin() ||
-        isTripParticipant(resource.data)
+        request.auth.uid == uid
+        || isSuperAdmin()
+        || (isAnyOwner() && resource.data.companyId == callerData().companyId)
+        || resource.data.phone == request.auth.token.phone_number
       );
-      allow create: if isSignedIn() &&
-                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner';
-      allow update: if isSignedIn() && (
-        isSuperAdmin() ||
-        isTripParticipant(resource.data)
-      );
-      allow delete: if isSuperAdmin();
-    }
 
-    // ── events ─────────────────────────────────────────────────────────────
-    match /events/{eventId} {
-      allow read: if isSignedIn() && (
-        isSuperAdmin() ||
-        request.auth.uid == resource.data.driverId ||
-        get(/databases/$(database)/documents/trips/$(resource.data.tripId)).data.ownerId == request.auth.uid
-      );
-      // Drivers write their own events; super admin writes all
+      // ── CREATE ──
+      // a) Super Admin creates owners (addOwner) and seeds own user doc on first login
+      // b) Owner creates drivers (addDriver) — only role='driver' with same companyId
+      // c) Authenticated user creates own doc during UID migration
+      //    (phone auth UID differs from pending_ UID, app copies doc to new UID)
       allow create: if isSignedIn() && (
-        isSuperAdmin() ||
-        request.auth.uid == request.resource.data.driverId
+        isSuperAdmin()
+        || (isAnyOwner()
+            && request.resource.data.role == 'driver'
+            && request.resource.data.companyId == callerData().companyId)
+        || (request.auth.uid == uid
+            && request.resource.data.phone == request.auth.token.phone_number)
       );
+
+      // ── UPDATE ──
+      // a) User updates own fcmToken only (single field)
+      // b) Super Admin can update any user
+      // c) Owner can update drivers in their company (e.g., exitPin changes)
+      allow update: if isSignedIn() && (
+        (request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken']))
+        || isSuperAdmin()
+        || (isAnyOwner()
+            && resource.data.companyId == callerData().companyId
+            && resource.data.role == 'driver')
+      );
+
+      // ── DELETE ──
+      // Super Admin deletes owners; owners delete their company's drivers
+      allow delete: if isSignedIn() && (
+        isSuperAdmin()
+        || (isAnyOwner()
+            && resource.data.companyId == callerData().companyId
+            && resource.data.role == 'driver')
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 4. trips collection
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Query patterns:
+    //   observeActiveTrip(driverId)   → whereEqualTo("driverId",...) + whereEqualTo("status","active")
+    //   observeTripsForOwner(ownerId) → whereEqualTo("ownerId",...)
+    //   observeAllTrips()             → full collection (Super Admin)
+    //
+    match /trips/{tripId} {
+
+      // ── READ ──
+      // Driver reads own trips; owner reads trips they created; Super Admin reads all
+      allow read: if isSignedIn() && (
+        isSuperAdmin()
+        || request.auth.uid == resource.data.driverId
+        || request.auth.uid == resource.data.ownerId
+      );
+
+      // ── CREATE ──
+      // Only owners create trips (assignTrip)
+      allow create: if isSignedIn() && (
+        isSuperAdmin()
+        || (isAnyOwner() && request.resource.data.ownerId == request.auth.uid)
+      );
+
+      // ── UPDATE ──
+      // Driver updates location + status (trip completion, high risk escalation)
+      // Owner updates status; Super Admin can update anything
+      allow update: if isSignedIn() && (
+        isSuperAdmin()
+        || request.auth.uid == resource.data.driverId
+        || request.auth.uid == resource.data.ownerId
+      );
+
+      // ── DELETE ──
+      // Owner can delete their trips (trip history cleanup); Super Admin can delete any
+      allow delete: if isSignedIn() && (
+        isSuperAdmin()
+        || request.auth.uid == resource.data.ownerId
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5. events collection
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Query patterns:
+    //   observeEventsForTrip(tripId) → whereEqualTo("tripId",...) + orderBy("timestamp")
+    //
+    match /events/{eventId} {
+
+      // ── READ ──
+      // Driver reads own events; trip owner reads events; Super Admin reads all
+      allow read: if isSignedIn() && (
+        isSuperAdmin()
+        || request.auth.uid == resource.data.driverId
+        || request.auth.uid == resource.data.companyId
+        || (isAnyOwner()
+            && resource.data.companyId == callerData().companyId)
+      );
+
+      // ── CREATE ──
+      // Drivers write their own impairment events; Super Admin can write any
+      allow create: if isSignedIn() && (
+        isSuperAdmin()
+        || request.auth.uid == request.resource.data.driverId
+      );
+
+      // No update or delete for events — they're immutable audit records
       allow update, delete: if isSuperAdmin();
     }
 
-    // ── otps ───────────────────────────────────────────────────────────────
-    // OTPs are write-only for drivers (to request) and owner/superadmin (to generate).
-    // Validation happens server-side (via Firestore transaction in the app).
+    // ═══════════════════════════════════════════════════════════════════════
+    // 6. otps collection
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // OTP docs are keyed by tripId. Both the driver (validateOtp) and
+    // owner (writeOtp) need access to the trip's OTP doc.
+    //
     match /otps/{tripId} {
-      allow read: if isSignedIn() && (
-        isSuperAdmin() ||
-        get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid ||
-        get(/databases/$(database)/documents/trips/$(tripId)).data.driverId == request.auth.uid
+
+      // Must be a participant of the trip (driver or owner) or Super Admin
+      allow read, write: if isSignedIn() && (
+        isSuperAdmin()
+        || get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid
+        || get(/databases/$(database)/documents/trips/$(tripId)).data.driverId == request.auth.uid
       );
-      allow write: if isSignedIn() && (
-        isSuperAdmin() ||
-        get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid ||
-        get(/databases/$(database)/documents/trips/$(tripId)).data.driverId == request.auth.uid
-      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Catch-all: deny everything not explicitly allowed
+    // ═══════════════════════════════════════════════════════════════════════
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
