@@ -39,6 +39,9 @@ class DriversViewModel @Inject constructor(
     private var ownerCompanyId: String = ""
     private var ownerId: String = ""
 
+    /** Phones already mirrored this session — keeps the backfill to one write each. */
+    private val syncedPhones = mutableSetOf<String>()
+
     init {
         loadDriversAndTrips()
     }
@@ -64,6 +67,12 @@ class DriversViewModel @Inject constructor(
                     drivers     = drivers,
                     activeTrips = activeMap
                 )
+                // Backfill the pre-auth phone gate for drivers added before it existed
+                val missing = drivers.map { it.phone }.filter { it.isNotBlank() && it !in syncedPhones }
+                if (missing.isNotEmpty()) {
+                    syncedPhones += missing
+                    firestore.ensureAuthorizedPhones(missing)
+                }
             }
         }
     }
@@ -98,6 +107,9 @@ class DriversViewModel @Inject constructor(
                         exitPin   = exitPin
                     )
                 )
+                // Mirror the phone so the driver passes the pre-auth OTP gate
+                firestore.addAuthorizedPhone(normalizedPhone)
+
                 _uiState.value = _uiState.value.copy(
                     isLoading      = false,
                     successMessage = "Driver '$name' added."
@@ -143,8 +155,15 @@ class DriversViewModel @Inject constructor(
 
     fun deleteDriver(uid: String) {
         viewModelScope.launch {
-            runCatching { firestore.deleteUser(uid) }
-                .onFailure { _uiState.value = _uiState.value.copy(errorMessage = it.message) }
+            runCatching {
+                // Revoke the phone gate first, so a half-failed delete can't
+                // leave a number able to request OTPs.
+                firestore.getUser(uid)?.phone?.let { phone ->
+                    firestore.removeAuthorizedPhone(phone)
+                    syncedPhones -= phone
+                }
+                firestore.deleteUser(uid)
+            }.onFailure { _uiState.value = _uiState.value.copy(errorMessage = it.message) }
         }
     }
 

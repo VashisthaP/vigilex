@@ -86,6 +86,46 @@ class FirestoreDataSource @Inject constructor(
         awaitClose { reg.remove() }
     }
 
+    // ── Authorized phones (pre-auth OTP gate) ──────────────────────────────
+    //
+    // This gate is checked BEFORE the user signs in, so `request.auth` is null
+    // and the `users` collection is unreadable (it holds exitPin). This mirror
+    // collection is publicly readable by exact document ID and holds no PII —
+    // just an `active` flag. `list` is denied in the rules so it can't be dumped.
+
+    /** Firestore doc IDs can't contain '/', so strip the '+' for a clean key. */
+    private fun phoneKey(phone: String) = phone.trim().removePrefix("+")
+
+    /**
+     * Throws on network/permission failure so the caller can distinguish
+     * "definitely not registered" from "couldn't check" — see AuthViewModel.
+     */
+    suspend fun isPhoneAuthorized(phone: String): Boolean =
+        db.collection("authorized_phones").document(phoneKey(phone)).get().await().exists()
+
+    suspend fun addAuthorizedPhone(phone: String) {
+        if (phone.isBlank()) return
+        db.collection("authorized_phones").document(phoneKey(phone))
+            .set(mapOf("active" to true, "createdAt" to System.currentTimeMillis()))
+            .await()
+    }
+
+    suspend fun removeAuthorizedPhone(phone: String) {
+        if (phone.isBlank()) return
+        db.collection("authorized_phones").document(phoneKey(phone)).delete().await()
+    }
+
+    /**
+     * Backfills users that predate this collection. Idempotent, so it's safe to
+     * call on every dashboard load — Super Admin covers owners, owners cover
+     * their drivers, so every phone gets mirrored without a migration script.
+     */
+    suspend fun ensureAuthorizedPhones(phones: List<String>) {
+        phones.filter { it.isNotBlank() }.forEach { phone ->
+            runCatching { addAuthorizedPhone(phone) }
+        }
+    }
+
     // ── Companies ──────────────────────────────────────────────────────────
 
     suspend fun createCompany(company: Company) {

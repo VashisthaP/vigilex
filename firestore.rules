@@ -50,6 +50,24 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // 1b. authorized_phones — pre-auth OTP gate
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // The app checks whether a phone may request an OTP BEFORE sign-in, so
+    // request.auth is null and /users is unreadable (it holds exitPin).
+    //
+    // This mirror holds no PII — only { active, createdAt } keyed by phone.
+    // `get` is public so the gate works logged-out; `list` is denied so the
+    // set can't be enumerated. Worst case an attacker confirms one number at
+    // a time that they already knew — the same disclosure as any
+    // "is this number registered?" check.
+    match /authorized_phones/{phoneId} {
+      allow get:   if true;
+      allow list:  if false;
+      allow write: if isSuperAdmin() || isAnyOwner();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // 2. companies collection
     // ═══════════════════════════════════════════════════════════════════════
     match /companies/{companyId} {
@@ -82,7 +100,11 @@ service cloud.firestore {
         request.auth.uid == uid
         || isSuperAdmin()
         || (isAnyOwner() && resource.data.companyId == callerData().companyId)
+        // Needed by getUserByPhone() during the pending_ → real UID migration.
+        // Docs may store either E.164 (+91XXXXXXXXXX) or a bare 10-digit
+        // number, so accept both against the E.164 auth token.
         || resource.data.phone == request.auth.token.phone_number
+        || ('+91' + resource.data.phone) == request.auth.token.phone_number
       );
 
       // ── CREATE ──
@@ -96,7 +118,8 @@ service cloud.firestore {
             && request.resource.data.role == 'driver'
             && request.resource.data.companyId == callerData().companyId)
         || (request.auth.uid == uid
-            && request.resource.data.phone == request.auth.token.phone_number)
+            && (request.resource.data.phone == request.auth.token.phone_number
+                || ('+91' + request.resource.data.phone) == request.auth.token.phone_number))
       );
 
       // ── UPDATE ──

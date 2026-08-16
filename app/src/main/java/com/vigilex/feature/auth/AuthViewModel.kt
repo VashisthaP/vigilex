@@ -84,16 +84,20 @@ class AuthViewModel @Inject constructor(
             return
         }
 
-        // Check Firestore if phone is pre-registered (by Super Admin or Owner)
+        // Check the public authorized_phones mirror — the `users` collection is
+        // unreadable at this point because we haven't signed in yet.
         viewModelScope.launch {
-            val isAuthorized = runCatching {
-                firestore.getUserByPhone(phone) != null
-            }.getOrDefault(false)
+            val gate = runCatching { firestore.isPhoneAuthorized(phone) }
 
-            if (isAuthorized) {
-                sendFirebaseOtp(phone, activity)
-            } else {
-                _uiState.value = LoginUiState.Error(
+            when {
+                gate.getOrNull() == true -> sendFirebaseOtp(phone, activity)
+
+                // Couldn't reach Firestore (offline / rules hiccup). Fail OPEN:
+                // this gate only saves SMS cost. signInWithCredential() still
+                // rejects anyone without a real user doc, so access stays closed.
+                gate.isFailure -> sendFirebaseOtp(phone, activity)
+
+                else -> _uiState.value = LoginUiState.Error(
                     "This phone number is not authorized. Contact your administrator to get access."
                 )
             }

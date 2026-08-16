@@ -35,6 +35,9 @@ class SuperAdminViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(SuperAdminUiState())
     val uiState: StateFlow<SuperAdminUiState> = _uiState.asStateFlow()
 
+    /** Phones already mirrored this session — keeps the backfill to one write each. */
+    private val syncedPhones = mutableSetOf<String>()
+
     init {
         // Observe all owners (users with role OWNER)
         viewModelScope.launch {
@@ -42,6 +45,13 @@ class SuperAdminViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     owners = users.filter { it.role == Role.OWNER }
                 )
+                // Backfill the pre-auth phone gate for users created before it
+                // existed. Super Admin sees every user, so this covers them all.
+                val missing = users.map { it.phone }.filter { it.isNotBlank() && it !in syncedPhones }
+                if (missing.isNotEmpty()) {
+                    syncedPhones += missing
+                    firestore.ensureAuthorizedPhones(missing)
+                }
             }
         }
         viewModelScope.launch {
@@ -108,6 +118,9 @@ class SuperAdminViewModel @Inject constructor(
                         companyId = companyId
                     )
                 )
+                // Mirror the phone so the owner passes the pre-auth OTP gate
+                firestore.addAuthorizedPhone(normalizedPhone)
+
                 _uiState.value = _uiState.value.copy(
                     isLoading      = false,
                     successMessage = "Owner '${ownerName.trim()}' authorized. They can now log in via OTP."
@@ -120,7 +133,15 @@ class SuperAdminViewModel @Inject constructor(
 
     fun deleteOwner(uid: String) {
         viewModelScope.launch {
-            runCatching { firestore.deleteUser(uid) }
+            runCatching {
+                // Revoke the phone gate first, so a half-failed delete can't
+                // leave a number able to request OTPs.
+                firestore.getUser(uid)?.phone?.let { phone ->
+                    firestore.removeAuthorizedPhone(phone)
+                    syncedPhones -= phone
+                }
+                firestore.deleteUser(uid)
+            }
         }
     }
 
