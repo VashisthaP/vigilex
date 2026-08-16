@@ -44,7 +44,7 @@ app/src/main/java/com/vigilex/
 |   |   |-- service/
 |   |       |-- MonitoringForegroundService.kt  # Camera + location pipeline + WakeLock
 |   |       |-- DrowsinessAnalyzer.kt           # ML Kit face analysis + continuous alerting
-|   |       |-- AlertOrchestrator.kt            # Sound/vibration alerts (escalating)
+|   |       |-- AlertOrchestrator.kt            # Looping alarm, BT SCO -> speaker fallback
 |   |       |-- GeofenceReceiver.kt             # Destination arrival detection
 |   |       |-- BootReceiver.kt                 # Restart service after reboot
 |   |
@@ -96,11 +96,15 @@ DrowsinessAnalyzer (ImageAnalysis.Analyzer)
     |
     v
 AlertOrchestrator
-    |-- Forces audio volume to MAX
-    |-- Plays 3 escalating alarm bursts via MediaPlayer
+    |-- Forces audio volume to MAX (STREAM_ALARM)
     |-- Routes audio to Bluetooth SCO if connected, else phone speaker
-    |-- Triggers urgent vibration pattern
-    |-- ** CONTINUOUS ** — re-alerts every 5 seconds while condition persists
+    |-- Plays a LOOPING alarm via MediaPlayer (isLooping = true)
+    |-- isAlertActive guard — a second detection cannot stack a second player
+    |-- NO vibration (removed — testers found it more distracting than useful)
+    |
+    |-- Stops on either:
+    |       |-- Eyes open >= 2s  -> analyzer emits Recovered -> service stops it
+    |       |-- "Stop Alarm" tap -> service.manualStopAlarm()
     |
     v
 MonitoringForegroundService
@@ -118,11 +122,21 @@ MonitoringForegroundService
 Phone number input
     |
     v
-Authorization Gate (NEW)
-    |-- Check if phone is Super Admin -> always allowed
-    |-- Check Firestore for user doc with matching phone
-    |-- If not found -> "This phone number is not authorized"
-    |-- If found -> proceed to send OTP
+Authorization Gate
+    |-- Check if phone is Super Admin (BuildConfig) -> always allowed
+    |-- Else: get authorized_phones/{phone without '+'}
+    |       |-- Exists      -> send OTP
+    |       |-- Not found   -> "This phone number is not authorized"
+    |       |-- Lookup ERRORED -> send OTP anyway (fail open)
+    |
+    |   Why authorized_phones and not a users query?
+    |   This runs BEFORE sign-in, so request.auth is null and /users is
+    |   unreadable (it holds exitPin). authorized_phones is a zero-PII
+    |   mirror: public `get`, `list` denied so it can't be enumerated.
+    |
+    |   Why fail open on error? The gate only saves SMS cost. The real
+    |   boundary is below — a user with no Firestore doc is signed back
+    |   out after OTP verification regardless.
     |
     v
 Firebase Phone Auth (sends SMS OTP)
@@ -145,8 +159,17 @@ Resolve role:
 ### Firestore Collections
 
 ```
+superadmin/config
+    - email, phone, uid          (seeded on first Super Admin login)
+
+authorized_phones/{phoneNoPlus}  (pre-auth OTP gate — NO PII)
+    - active, createdAt
+    - doc ID is the E.164 number with '+' stripped: +919897831882 -> 919897831882
+    - rules: allow get: if true / allow list: if false
+
 users/{uid}
     - name, phone, email, role, companyId, exitPin, fcmToken
+    - exitPin gates driver sign-out, so this collection is never public
 
 companies/{id}
     - companyName, ownerUid, driverCount, createdAt
@@ -175,7 +198,13 @@ otps/{tripId}
 
 3. **No speed gate** — Monitoring runs at all speeds including stationary. This was changed from an earlier 20 km/h threshold because drivers can fall asleep even while stopped (at traffic lights, waiting areas). The accelerometer-based erratic motion detection uses a high threshold (8 m/s², 3s sustained) to avoid false alarms from normal turns and parking maneuvers.
 
-4. **Phone authorization gate** — OTP is only sent to phone numbers pre-registered in Firestore by a Super Admin (for owners) or Owner (for drivers). Unauthorized numbers are blocked before any SMS is sent, preventing SMS spam and unauthorized access.
+4. **Phone authorization gate via a separate mirror collection** — OTP is only sent to numbers pre-registered by a Super Admin (owners) or Owner (drivers), blocking SMS spam and unauthorized access.
+
+   The gate must run *before* sign-in, when `request.auth` is null. That makes `users` unreadable under production rules — and reopening it isn't an option, because those docs carry `exitPin`, the credential gating driver sign-out. So the app keeps **`authorized_phones`**: a zero-PII mirror with public `get` and `list` denied, so an attacker can at most confirm a number they already knew, one at a time.
+
+   Writes happen alongside `addOwner` / `addDriver`, revocation happens before `deleteUser`, and users predating the collection are backfilled idempotently on dashboard load — no migration script.
+
+   > **Historical note.** The gate originally queried `users` by phone. That worked only because Firestore was in test mode; the day production rules landed, every non-Super-Admin login broke with a misleading "not authorized" message, because `runCatching{}.getOrDefault(false)` swallowed the `PERMISSION_DENIED`. Hence the current design, and hence `isPhoneAuthorized()` throws instead of defaulting — so callers can distinguish "not registered" from "couldn't check" and fail open on the latter.
 
 5. **WakeLock + foreground service** — A `PARTIAL_WAKE_LOCK` keeps the CPU running when the screen is off. Combined with `FOREGROUND_SERVICE_CAMERA` and `FOREGROUND_SERVICE_LOCATION` types, this ensures CameraX continues processing frames even when the user presses the power button.
 
@@ -186,3 +215,9 @@ otps/{tripId}
 8. **Adaptive icon with vector drawables** — Launcher icons use proper vector drawables (not just color references) to prevent Samsung PackageInstaller crash during sideloaded APK install.
 
 9. **PIN-locked sign-out** — Driver sign-out always requires a 6-digit exit PIN, regardless of whether a trip is active. This prevents drivers from disabling monitoring without owner knowledge.
+
+10. **Stateful alarm with two stop paths** — Early builds fired three escalating bursts and had no way to stop early, so the alarm kept sounding after the driver was fully awake. It now loops a single `MediaPlayer` and stops on either an automatic trigger (`DrowsinessAnalyzer` tracks `eyesOpenSinceMs`; 2 seconds open emits `MonitoringStatus.Recovered`) or a manual **Stop Alarm** button. The UI reaches the service through a `@Volatile` companion `instance` set in `onCreate` and cleared in `onDestroy`. An `isAlertActive` flag makes `triggerAlert()` a no-op while an alarm is already playing, so repeat detections can't stack overlapping players.
+
+11. **Collapsible camera preview** — Drivers reported the full-size preview was distracting. A `(−)` / `(+)` toggle shrinks it to a 120×90dp thumbnail and back. Detection is unaffected either way: the `Preview` use case is bound to the service, and the composable only attaches a surface to it.
+
+12. **Production Firestore rules, not test mode** — Test-mode rules carry a 30-day expiry after which all client access is denied. [`firestore.rules`](../firestore.rules) implements per-collection, per-role access with a `match /{document=**} { allow read, write: if false; }` catch-all. Note that the `users` read rule matches the auth token against both E.164 and bare-10-digit stored phones, since docs created by hand in the Console may use either — without that, the `pending_` → real-UID migration silently fails.

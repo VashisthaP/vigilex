@@ -138,15 +138,19 @@ Step 3: Monitoring Screen (MAIN SCREEN)
     |
     |-- [LIVE CAMERA PREVIEW]
     |       |-- Front camera feed shown in rounded box
+    |       |-- (−) collapses to a 120x90dp thumbnail, (+) restores full size
+    |       |       (detection is unaffected — only the surface shrinks)
+    |       |
     |       |-- Colored border indicates status:
-    |       |       GREEN  = Face detected, monitoring normally
+    |       |       GREEN  = Face detected, monitoring normally (or Recovered)
     |       |       AMBER  = Calibrating (with progress %)
     |       |       ORANGE = Face not detected — adjust camera
     |       |       RED    = Impairment detected — ALARM ACTIVE
     |       |
     |       |-- Status label below preview:
     |               "Monitoring Active" / "Calibrating (45%)" /
-    |               "Face Not Detected — Adjust Camera" / "⚠ Impairment Detected"
+    |               "Face Not Detected — Adjust Camera" / "⚠ Impairment Detected" /
+    |               "Driver Awake — Alarm Stopped"
     |
     |-- Calibration phase (first 15 seconds)
     |       |-- Collects baseline eye openness from face detection
@@ -154,12 +158,17 @@ Step 3: Monitoring Screen (MAIN SCREEN)
     |       |-- No alerts during calibration
     |
     |-- Active monitoring (NO speed gate — always active)
-    |       |-- Eyes closed > 2s -> ALARM (sound + vibration)
+    |       |-- Eyes closed > 2s -> ALARM (looping sound, NO vibration)
     |       |       ** CONTINUOUS: re-alerts every 5 seconds while eyes remain closed **
     |       |-- Head drop detected -> ALARM
     |       |-- Erratic lateral motion (8+ m/s², 3s sustained) -> ALARM
     |       |-- Two different signals within 10s -> COMBINED (highest severity)
     |       |-- 3+ alerts in 30 min -> Trip escalated to HIGH_RISK
+    |       |
+    |       |-- Stopping the alarm — two paths:
+    |       |       |-- AUTO:   eyes open >= 2s -> status Recovered, alarm stops
+    |       |       |-- MANUAL: [Stop Alarm] button (visible only during an alert)
+    |       |       Alarm loops until one of these fires — it never self-terminates.
     |       |
     |       |-- If trip assigned by owner:
     |       |       Shows "Destination: [name]" at top
@@ -216,10 +225,18 @@ Step 3: Monitoring Screen (MAIN SCREEN)
 ```
 
 ### Authorization Gate:
-- **Before OTP is sent**, the app checks Firestore for a user doc matching the phone number
+- **Before OTP is sent**, the app looks up `authorized_phones/{phone without '+'}`
 - Only Super Admin phone (from BuildConfig) bypasses this check
-- Unauthorized phone numbers see: "This phone number is not authorized. Contact your administrator."
+- Unauthorized numbers see: "This phone number is not authorized. Contact your administrator."
 - No SMS is sent, no Firebase Auth session is created
+- The gate reads `authorized_phones` — **not** `users` — because it runs while
+  logged out, and `users` holds `exitPin` so it can't be publicly readable.
+  The mirror carries no PII and denies `list`, so it can't be enumerated.
+- Entries are written on Add Owner / Add Driver, revoked on delete, and
+  backfilled for pre-existing users on dashboard load
+- If the lookup **errors**, the gate fails open and sends the OTP — it only
+  saves SMS cost. Post-auth, a user with no Firestore doc is signed straight
+  back out, so access stays closed either way.
 
 ### PIN System:
 - **Exit PIN** is set by the Owner when adding a driver
