@@ -23,8 +23,8 @@ android {
         applicationId = "com.vigilex"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 11
+        versionName = "1.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Ensure 64-bit support for modern phones (S24, OnePlus, etc.)
@@ -54,8 +54,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            signingConfig   = signingConfigs.getByName("release")
+            // Play submissions should ship minified + resource-shrunk. See
+            // proguard-rules.pro for why this is safe: Firestore mapping is
+            // manual, so no model is constructed reflectively.
+            isMinifyEnabled   = true
+            isShrinkResources = true
+            signingConfig     = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

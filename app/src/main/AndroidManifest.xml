@@ -27,7 +27,11 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- neverForLocation: we only enumerate already-paired audio devices and never
+         derive location from BT scans. Without this flag Play treats BLUETOOTH_SCAN
+         as a location signal, which pulls in extra location-policy review. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
     <!-- Required by AudioManager.startBluetoothSco() -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
@@ -37,7 +41,11 @@
 
     <!-- ── Persistence ── -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- REQUEST_IGNORE_BATTERY_OPTIMIZATIONS intentionally NOT declared.
+         Play restricts it to a narrow allowlist and rejects most other uses, and
+         nothing in the codebase ever requested it. The OEMs that actually kill our
+         service (MIUI / ColorOS / FuntouchOS) ignore the exemption anyway, so users
+         are directed to per-OEM battery settings instead — see README. -->
 
     <!-- ── Notifications (Android 13+) ── -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
