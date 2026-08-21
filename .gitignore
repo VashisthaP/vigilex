@@ -30,3 +30,5 @@ Thumbs.db
 *.aab
 # R8 mapping: archive per release for crash deobfuscation, but not in git
 mapping.txt
+release/
+mapping-*.txt
