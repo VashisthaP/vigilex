@@ -24,3 +24,9 @@ captures/
 # OS
 .DS_Store
 Thumbs.db
+
+# Release artifacts — share these directly, never commit them (50MB+)
+*.apk
+*.aab
+# R8 mapping: archive per release for crash deobfuscation, but not in git
+mapping.txt
