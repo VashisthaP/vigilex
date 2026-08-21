@@ -23,8 +23,8 @@ android {
         applicationId = "com.vigilex"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.1.1"
+        versionCode = 12
+        versionName = "1.1.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Ensure 64-bit support for modern phones (S24, OnePlus, etc.)

@@ -220,4 +220,18 @@ otps/{tripId}
 
 11. **Collapsible camera preview** — Drivers reported the full-size preview was distracting. A `(−)` / `(+)` toggle shrinks it to a 120×90dp thumbnail and back. Detection is unaffected either way: the `Preview` use case is bound to the service, and the composable only attaches a surface to it.
 
-12. **Production Firestore rules, not test mode** — Test-mode rules carry a 30-day expiry after which all client access is denied. [`firestore.rules`](../firestore.rules) implements per-collection, per-role access with a `match /{document=**} { allow read, write: if false; }` catch-all. Note that the `users` read rule matches the auth token against both E.164 and bare-10-digit stored phones, since docs created by hand in the Console may use either — without that, the `pending_` → real-UID migration silently fails.
+12. **R8 minification is safe here because Firestore mapping is manual** — release builds run with `isMinifyEnabled = true` and `isShrinkResources = true`, cutting the APK from 54 MB to 42 MB (the AAB to 27 MB).
+
+    This is normally risky with Firebase, because `DocumentSnapshot.toObject<T>()` constructs models reflectively and R8 strips fields it can't see referenced. VigileX avoids that entirely: `FirestoreDataSource` maps every document by hand via `getString()`/`getLong()` and `toMap()`. No model is ever built reflectively, so there's nothing to break.
+
+    Model classes are nonetheless kept in `proguard-rules.pro` — it costs a handful of classes and prevents a silent, hard-to-diagnose failure if anyone later switches to reflective mapping. Services and Workers are kept too, since both are resolved by class name (from the manifest and the WorkManager database respectively).
+
+    `SourceFile`/`LineNumberTable` are retained so Play Console traces stay readable once `mapping.txt` is uploaded. **Archive that file per release** — it's overwritten every build, and without it crash reports are useless.
+
+    The practical consequence: minification failures appear only at runtime. Any release build must be smoke-tested on a real device.
+
+13. **Permissions trimmed to what's defensible on Play** — `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` was declared but never requested anywhere in the codebase; Play restricts it to a narrow allowlist and the OEMs that actually kill the service ignore the exemption regardless. `VIBRATE` outlived the vibration feature it existed for. Both removed. `BLUETOOTH_SCAN` carries `neverForLocation`, since only already-paired audio devices are enumerated and Play otherwise treats it as a location signal.
+
+    Two remain contentious and are tracked as open decisions in `PLAY_STORE.md`: `ACCESS_BACKGROUND_LOCATION` is needed *only* by the Geofencing API and could be dropped by computing arrival from the location the service already samples every 30s; `RECORD_AUDIO` exists solely because `startBluetoothSco()` demands it and the app has no capture path at all.
+
+14. **Production Firestore rules, not test mode** — Test-mode rules carry a 30-day expiry after which all client access is denied. [`firestore.rules`](../firestore.rules) implements per-collection, per-role access with a `match /{document=**} { allow read, write: if false; }` catch-all. Note that the `users` read rule matches the auth token against both E.164 and bare-10-digit stored phones, since docs created by hand in the Console may use either — without that, the `pending_` → real-UID migration silently fails.

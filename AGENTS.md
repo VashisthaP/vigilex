@@ -156,7 +156,8 @@ sounding after the driver was fully awake. If you add a third trigger, wire it
 through the same two methods.
 
 **No vibration.** It was removed after testers found it more distracting than
-the alarm. Don't re-add it.
+the alarm, and the `VIBRATE` permission was removed with it. Re-adding
+vibration means re-declaring the permission — don't do either.
 
 ### 3.5 Adding a `MonitoringStatus` variant touches the UI
 

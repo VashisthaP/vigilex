@@ -13,7 +13,9 @@ Last updated for **versionCode 11 / versionName 1.1.1**.
 | ✅ `targetSdk 35` | Meets Play's current requirement |
 | ✅ 64-bit support | `arm64-v8a` included |
 | ✅ Removed `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Was declared but never used in code |
+| ✅ Removed `VIBRATE` | Outlived the vibration feature it existed for |
 | ✅ `BLUETOOTH_SCAN` marked `neverForLocation` | Avoids extra location-policy review |
+| ⚠️ Release build not yet smoke-tested | R8 failures surface only at runtime — **do this before submitting** |
 | ❌ Privacy policy not hosted | **Blocker** — see §2 |
 | ❌ Data safety form not filled | **Blocker** — draft answers in §4 |
 | ❌ Sensitive-permission declarations not submitted | **Blocker** — draft text in §3 |
@@ -25,22 +27,66 @@ before you commit to a production submission that can be rejected.
 
 ---
 
-## 1. What you must provide
+## 1. Your action checklist
 
-Nothing below can be produced from the codebase — these need you.
+Nothing below can be produced from the codebase. Tick these off as you go — this
+is the live list, so update it in place.
 
-| Item | Notes |
-|---|---|
-| **Play Console account** | $25 one-time. Register as an **Organisation** if this is for a business — individual accounts now require additional identity verification and, for new personal accounts, a 12-tester/14-day closed test before production. |
-| **Privacy policy URL** | Publicly reachable. Use `docs/PRIVACY_POLICY.md` as the source; GitHub Pages is fine. |
-| **App icon** | 512×512 PNG, 32-bit |
-| **Feature graphic** | 1024×500 PNG/JPEG |
-| **Screenshots** | ≥ 2 phone screenshots, 16:9 or 9:16, min 320px. Include the driver monitoring screen and the owner map. |
-| **Short description** | ≤ 80 chars |
-| **Full description** | ≤ 4000 chars |
-| **Background-location demo video** | **Mandatory** for `ACCESS_BACKGROUND_LOCATION`. YouTube link, unlisted is fine. Must show the feature working and the in-app disclosure. |
-| **Content rating questionnaire** | Filled in Console |
-| **Contact email** | Public on the listing |
+### Accounts & hosting
+
+- [ ] **Play Console account** — $25 one-time. Register as an **Organisation** if
+      commercial. New *personal* accounts must run a 12-tester / 14-day closed
+      test before production is unlocked; Organisation accounts skip that.
+- [ ] **Host the privacy policy** → note the public URL here: `________`
+      - Source: `docs/PRIVACY_POLICY.md`. GitHub Pages is sufficient.
+      - Replace first: `[COMPANY NAME]`, `[CONTACT EMAIL]`, `[JURISDICTION]`,
+        `[RETENTION PERIOD]`.
+      - Then **read it through** — it asserts facts about your data handling that
+        you are accountable for.
+- [ ] **Decide the retention period** for trip and event history → `________`
+      (needed by both the policy and the data-safety form)
+- [ ] **Public contact email** for the listing → `________`
+
+### Store assets
+
+- [ ] App icon — 512×512 PNG, 32-bit
+- [ ] Feature graphic — 1024×500 PNG/JPEG
+- [ ] Screenshots — ≥ 2, 16:9 or 9:16, min 320px.
+      Suggested: driver monitoring screen (green border, mid-session) and the
+      owner live map.
+- [ ] Short description — ≤ 80 chars
+- [ ] Full description — ≤ 4000 chars.
+      **Mirror the in-app safety disclaimer here** — "driver assistance aid, not
+      a safety guarantee, not a medical device". Impairment detection edges into
+      health claims, and stating the limitation up front pre-empts the question.
+
+### Console forms
+
+- [ ] Content rating questionnaire
+- [ ] Data safety form — draft answers in §4, copy them across
+- [ ] Sensitive permission declarations — paste-ready text in §3
+- [ ] **Background-location demo video** — mandatory while
+      `ACCESS_BACKGROUND_LOCATION` is declared. Unlisted YouTube is fine. Must
+      show the feature working *and* the in-app disclosure.
+      → **Possibly avoidable entirely — settle §5.1 before recording this.**
+
+### Decisions to settle (see §5)
+
+- [ ] §5.1 — drop `ACCESS_BACKGROUND_LOCATION` by replacing the Geofencing API
+      with a distance check? *(recommended — removes the highest-rejection-rate
+      permission and the video requirement)*
+- [ ] §5.2 — keep, drop, or rework Bluetooth SCO to shed `RECORD_AUDIO`?
+- [ ] Default the camera preview to collapsed? *(see §7 — one-line change,
+      strengthens the driver-distraction position)*
+
+### Before each upload
+
+- [ ] Bump `versionCode` **and** `versionName`
+- [ ] Smoke-test the **release** build on a real device (minification failures
+      only appear at runtime)
+- [ ] Confirm the release keystore SHA-1 **and** SHA-256 are registered in
+      Firebase, or Phone Auth fails silently
+- [ ] Upload `mapping.txt` alongside the AAB
 
 ---
 

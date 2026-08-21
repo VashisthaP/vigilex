@@ -93,9 +93,28 @@ sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk
 
 ## Step 5 — Build & run
 
+> **Use PowerShell, not Git Bash**, and always pass `--no-daemon`. Git Bash fails with `Unable to establish loopback connection`, and the persistent Gradle daemon can't bind its localhost socket on some machines. Builds take 7–15 minutes as a result.
+
 ```bash
-./gradlew installDebug
+.\gradlew.bat installDebug --no-daemon
 ```
+
+### Release builds
+
+```bash
+.\gradlew.bat assembleRelease --no-daemon   # signed APK — for direct sharing
+.\gradlew.bat bundleRelease   --no-daemon   # signed AAB — for Play Console
+```
+
+Release builds are **minified with R8** (`isMinifyEnabled = true`), which matters in three ways:
+
+1. **Always smoke-test a release build on a real device.** Minification breaks things at runtime, never at compile time — a build that compiles cleanly can still crash or silently lose a feature.
+2. **Archive `app/build/outputs/mapping/release/mapping.txt`** for every release you distribute. Without it, Play Console crash reports are unreadable. It's overwritten on every build.
+3. If something works in debug but not release, R8 stripped something. Add a `-keep` rule to [`app/proguard-rules.pro`](app/proguard-rules.pro), which explains the existing rules and why minification is safe here.
+
+Release APKs **cannot install over a debug build** (or vice versa) — different signing keys. Uninstall first.
+
+> ⚠️ **The release keystore's SHA-1 *and* SHA-256 must both be registered in Firebase**, or Phone Auth fails silently in release builds. Testing the debug build proves nothing about release.
 
 ---
 
@@ -203,7 +222,16 @@ app/src/main/java/com/vigilex/
 └── ui/                      theme (navy + amber), shared components
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the data-flow detail and [`docs/APP_FLOW.md`](docs/APP_FLOW.md) for screen-by-screen behaviour. [`docs/VigileX_Architecture_Diagrams.html`](docs/VigileX_Architecture_Diagrams.html) renders the whole system as diagrams — open it in a browser.
+### Further documentation
+
+| File | Read it for |
+|---|---|
+| [`AGENTS.md`](AGENTS.md) | **Start here when resuming work.** Invariants that fail silently, why the tuned constants hold their values, environmental traps, and what's deliberately unimplemented. Written for AI coding agents but equally useful to a human picking this up cold. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Data-flow detail and numbered design decisions with rationale |
+| [`docs/APP_FLOW.md`](docs/APP_FLOW.md) | Screen-by-screen behaviour per role |
+| [`docs/VigileX_Architecture_Diagrams.html`](docs/VigileX_Architecture_Diagrams.html) | The whole system as rendered diagrams — open in a browser |
+| [`docs/PLAY_STORE.md`](docs/PLAY_STORE.md) | Play submission status, blockers, and paste-ready permission declarations |
+| [`docs/PRIVACY_POLICY.md`](docs/PRIVACY_POLICY.md) | Privacy policy draft — must be hosted publicly before Play submission |
 
 ---
 
@@ -225,7 +253,22 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the data-flow detail and 
 
 ## Permissions
 
-`CAMERA`, `ACCESS_FINE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`, `POST_NOTIFICATIONS`, `BLUETOOTH_CONNECT`, `RECORD_AUDIO` (required by BT SCO), `WAKE_LOCK`, `FOREGROUND_SERVICE_CAMERA`, `FOREGROUND_SERVICE_LOCATION`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+| Permission | Why |
+|---|---|
+| `CAMERA` | Face analysis for drowsiness detection |
+| `ACCESS_FINE_LOCATION` | Trip route recording |
+| `ACCESS_BACKGROUND_LOCATION` | Required by the Geofencing API only — see [`docs/PLAY_STORE.md`](docs/PLAY_STORE.md) §5.1, this is probably removable |
+| `FOREGROUND_SERVICE_CAMERA` / `_LOCATION` | Android 14+ requires explicit service types |
+| `POST_NOTIFICATIONS` | Monitoring status + alert notifications |
+| `BLUETOOTH_CONNECT` / `_SCAN` | Enumerate paired car audio. `_SCAN` is flagged `neverForLocation`. |
+| `RECORD_AUDIO` | **Never records.** Android requires it for `startBluetoothSco()` |
+| `WAKE_LOCK` | Keep the CPU alive with the screen off |
+| `RECEIVE_BOOT_COMPLETED` | Resume monitoring after a reboot mid-trip |
+
+Two permissions are deliberately **not** declared:
+
+- **`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`** — Play restricts it to a narrow allowlist, nothing in the code ever requested it, and the OEMs that actually kill the service ignore the exemption anyway.
+- **`VIBRATE`** — vibration was removed from the alert path; the permission went with it.
 
 ---
 

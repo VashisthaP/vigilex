@@ -36,7 +36,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- ── Alerts ── -->
-    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- VIBRATE intentionally NOT declared. Vibration was removed from
+         AlertOrchestrator after testers found it more distracting than the
+         alarm itself, so the permission is dead weight on the Play listing. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- ── Persistence ── -->
